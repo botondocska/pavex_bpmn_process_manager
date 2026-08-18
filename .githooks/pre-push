@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+echo ">>> cargo deny"
+cargo deny check advisories bans sources
+
+echo ">>> cargo test"
+cargo test --all
+
+echo ">>> pre-push passed"

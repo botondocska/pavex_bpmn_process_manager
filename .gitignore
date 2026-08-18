@@ -1,0 +1,9 @@
+/target
+.env
+data/
+app/tailwind-bin/
+/coverage
+lcov.info
+recipe.json
+priv.pem
+pub.pem
