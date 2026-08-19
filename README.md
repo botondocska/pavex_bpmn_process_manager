@@ -1,4 +1,5 @@
 # pavex_bpmn_process_manager
+- This is a project for BPMN process tracking and email managing for businesses
 
 # Getting started
 
@@ -8,6 +9,7 @@
 - [Pavex]
 - [`cargo-px`]
 - _(Optional but recommended)_ [`cargo-hakari`](https://docs.rs/cargo-hakari/0.9.29/cargo_hakari/index.html#installation)
+- run this command to set up gitcommands: [`git config core.hooksPath .githooks`]
 
 ## Useful commands
 
@@ -63,3 +65,4 @@ cargo hakari generate && cargo hakari manage-deps -y
 [Pavex]: https://pavex.dev
 [`cargo-px`]: https://lukemathwalker.github.io/cargo-px/
 [CONFIGURATION.md]: CONFIGURATION.md
+
