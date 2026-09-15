@@ -1,0 +1,6 @@
+{
+  "files.eol": "\n",
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.procMacro.enable": true,
+  "rust-analyzer.diagnostics.disabled": ["macro-error"]
+}

@@ -25,3 +25,7 @@ tracing_log_error = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde-aux = "4"
 workspace_hack = { version = "0.1", path = "../workspace_hack" }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "migrate", "uuid", "macros", "postgres", "time"] }
+secrecy = { version = "0.8", features = ["serde"] }
+pavex_session = "0.2.10"
+pavex_session_sqlx = { version = "0.2.10", features = ["postgres"] }

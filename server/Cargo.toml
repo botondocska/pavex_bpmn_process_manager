@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["full"] }
 server_sdk = { path = "../server_sdk" }
 app = { path = "../app" }
 workspace_hack = { version = "0.1", path = "../workspace_hack" }
+pavex_session = "0.2.10"
 
 [dev-dependencies]
 reqwest = "0.12"
