@@ -74,7 +74,7 @@ impl TestApi {
 impl TestApi {
     pub async fn post_signup(&self, email: &str, password: &str) -> reqwest::Response {
         self.api_client
-            .post(format!("{}/api/signup", &self.api_address))
+            .post(format!("{}/signup", &self.api_address))
             .form(&[("email", email), ("password", password)])
             .send()
             .await
