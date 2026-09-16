@@ -23,7 +23,6 @@ hyper = { version = "1", default-features = false }
 matchit = { version = "0.8", default-features = false }
 pavex = { version = "0.2", default-features = false }
 pavex_session = { version = "0.2", default-features = false }
-pavex_session_sqlx = { version = "0.2", default-features = false }
 pavex_tracing = { version = "0.2", default-features = false }
 serde = { version = "1", default-features = false }
 sqlx-core = { version = "0.8", default-features = false }

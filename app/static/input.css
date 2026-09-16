@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@source "../templates";
+@source not "./tailwind-bin";
+@source not "./daisyui{,*}.mjs";
+
+@plugin "../tailwind-bin/daisyui.mjs" {
+  themes: forest --default, nord;
+}
+@plugin "../tailwind-bin/daisyui-theme.mjs";

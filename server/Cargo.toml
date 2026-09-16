@@ -27,6 +27,7 @@ server_sdk = { path = "../server_sdk" }
 app = { path = "../app" }
 workspace_hack = { version = "0.1", path = "../workspace_hack" }
 pavex_session = "0.2.10"
+uuid = { version = "1.26.1", features = ["serde", "v4"] }
 
 [dev-dependencies]
 reqwest = "0.12"

@@ -2,12 +2,11 @@
 //! on how to manage configuration values.
 use pavex::config;
 use pavex::server::IncomingStream;
-use pavex_session::{SessionStore};
+use pavex_session::SessionStore;
 use pavex_session_sqlx::postgres::PostgresSessionStore;
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use secrecy::{ExposeSecret, Secret};
 use serde_aux::field_attributes::deserialize_number_from_string;
-
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
 #[derive(serde::Deserialize, Debug, Clone)]
 /// Configuration for the HTTP server used to expose our API

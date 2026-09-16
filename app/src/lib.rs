@@ -7,3 +7,5 @@ pub mod routes;
 pub mod telemetry;
 
 pub use blueprint::blueprint;
+pub mod session;
+pub mod static_files;

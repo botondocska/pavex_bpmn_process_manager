@@ -71,11 +71,11 @@ impl TestApi {
     }
 }
 
-/// Convenient methods for calling the API under test.
 impl TestApi {
-    pub async fn get_ping(&self) -> reqwest::Response {
+    pub async fn post_signup(&self, email: &str, password: &str) -> reqwest::Response {
         self.api_client
-            .get(format!("{}/api/ping", &self.api_address))
+            .post(format!("{}/api/signup", &self.api_address))
+            .form(&[("email", email), ("password", password)])
             .send()
             .await
             .expect("Failed to execute request.")

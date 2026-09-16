@@ -1,6 +1,7 @@
 [package]
 name = "app"
 version = "0.1.0"
+build = "build.rs"
 edition.workspace = true
 
 [[bin]]
@@ -29,3 +30,10 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 secrecy = { version = "0.8", features = ["serde"] }
 pavex_session = "0.2.10"
 pavex_session_sqlx = { version = "0.2.10", features = ["postgres"] }
+uuid = { version = "1.26.1", features = ["serde", "v4"] }
+thiserror = "2.0.20"
+tokio = "1.53.1"
+anyhow = "1.0.104"
+argon2 = "0.6.0"
+rand = "0.10.2"
+askama = "0.16.1"

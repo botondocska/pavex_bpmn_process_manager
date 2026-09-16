@@ -2,7 +2,6 @@ use crate::telemetry;
 use pavex::{Blueprint, blueprint::from, cookie::INJECT_RESPONSE_COOKIES};
 use pavex_session::FINALIZE_SESSION;
 
-
 /// The main blueprint, defining all the components used in this API.
 pub fn blueprint() -> Blueprint {
     let mut bp = Blueprint::new();
@@ -15,13 +14,11 @@ pub fn blueprint() -> Blueprint {
         // by the framework itself.
         pavex,
         pavex_session,
-        pavex_session_sqlx,
     ]);
 
     telemetry::instrument(&mut bp);
     bp.post_process(FINALIZE_SESSION);
     bp.post_process(INJECT_RESPONSE_COOKIES);
-    
-    bp.prefix("/api").routes(from![crate]);
+    bp.routes(from![crate]);
     bp
 }
