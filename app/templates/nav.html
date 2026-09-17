@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="w-full px-3 py-4 sm:px-4 sm:py-6 lg:py-10">
+<nav class="mb-4 sm:mb-6 flex flex-wrap items-center gap-3 sm:gap-4 text-base sm:text-sm">
+  {% for item in nav_items %}
+    <a href="{{ item.path }}" class="py-1 {% if active_page == item.key %}font-semibold text-base-content{% else %}link link-primary no-underline hover:underline{% endif %}">{{ item.label }}</a>
+  {% endfor %}
+  <form method="post" action="/logout" class="ml-auto">
+    <button type="submit" class="link link-error no-underline hover:underline py-1">Logout</button>
+  </form>
+</nav>
+{% block page_content %}{% endblock %}
+</div>
+{% endblock %}

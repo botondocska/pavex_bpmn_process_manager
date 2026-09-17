@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Log In{% endblock %}
+{% block content %}
+<div class="min-h-screen flex items-center justify-center px-4">
+  <form hx-post="/login" class="bg-base-100 border border-base-300 p-6 sm:p-8 rounded-lg shadow-md w-full max-w-96 space-y-4">
+  <h1 class="text-2xl font-bold">Log In</h1>
+  <p class="text-sm opacity-70">Welcome back. Enter your credentials.</p>
+  <input name="email" type="email" placeholder="Email" class="input input-bordered input-lg sm:input-md w-full">
+  <input name="password" type="password" placeholder="Password" class="input input-bordered input-lg sm:input-md w-full">
+  <button type="submit" class="btn btn-primary btn-lg sm:btn-md w-full">Log In</button>
+  <p class="text-center text-sm opacity-70">
+    No account? <a href="/signup" class="link link-primary">Sign up</a>
+  </p>
+  </form>
+</div>
+{% endblock %}
