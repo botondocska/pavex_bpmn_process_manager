@@ -1,0 +1,44 @@
+{% extends "nav.html" %}
+{% block title %}Upload Process{% endblock %}
+{% block page_content %}
+<div class="space-y-6">
+  <div class="bg-base-100 border border-base-300 p-6 rounded-lg shadow-md space-y-4">
+    <h1 class="text-2xl font-bold">Upload BPMN Process</h1>
+    <p class="text-sm opacity-70">Upload a .bpmn file to register a new process definition.</p>
+
+    <!-- TODO: switch to a real multipart file input once the upload endpoint accepts multipart. -->
+    <form hx-post="/processes/upload" class="space-y-4">
+      <input name="name" type="text" placeholder="Process name" class="input input-bordered w-full">
+      <textarea name="bpmn_xml" id="bpmn-xml-input" rows="6" placeholder="Paste BPMN 2.0 XML here (temporary, until file upload is wired in)" class="textarea textarea-bordered w-full font-mono text-xs"></textarea>
+      <input type="file" id="bpmn-file-input" accept=".bpmn,.xml" class="file-input file-input-bordered w-full">
+      <button type="submit" class="btn btn-primary">Upload</button>
+    </form>
+  </div>
+
+  <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-2">
+    <div id="bpmn-canvas" class="w-full" style="height: 500px;"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/bpmn-js@17/dist/bpmn-viewer.development.js"></script>
+<script>
+  const viewer = new BpmnJS({ container: '#bpmn-canvas' });
+
+  async function renderXml(xml) {
+    try {
+      await viewer.importXML(xml);
+      viewer.get('canvas').zoom('fit-viewport');
+    } catch (err) {
+      console.error('Failed to render BPMN diagram', err);
+    }
+  }
+
+  document.getElementById('bpmn-file-input').addEventListener('change', async (evt) => {
+    const file = evt.target.files[0];
+    if (!file) return;
+    const xml = await file.text();
+    document.getElementById('bpmn-xml-input').value = xml;
+    renderXml(xml);
+  });
+</script>
+{% endblock %}

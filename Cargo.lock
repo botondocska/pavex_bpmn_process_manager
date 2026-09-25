@@ -88,6 +88,10 @@ dependencies = [
  "anyhow",
  "argon2",
  "askama",
+ "async-trait",
+ "bpm-engine-bpmn",
+ "bpm-engine-core",
+ "bpm-engine-storage",
  "cargo_px_env",
  "humantime-serde",
  "pavex",
@@ -99,8 +103,10 @@ dependencies = [
  "secrecy",
  "serde",
  "serde-aux",
+ "serde_json",
  "sqlx",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
  "tracing_log_error",
@@ -300,6 +306,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "bpm-engine-bpmn"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db9918f4db8a5c8a79785215aa66f316ed4b86e085d25748a3253abc71b2faaf"
+dependencies = [
+ "bpm-engine-core",
+ "roxmltree",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "bpm-engine-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7602894e9deaf0790f6093056d5897ceac0e0354d196650c85ce7b1de494a2c"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "bpm-engine-storage"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35638ac521b9e9182af811cbe7d08a9c451ded5987e1ee1778270804c52af86f"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bpm-engine-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2325,6 +2368,12 @@ dependencies = [
  "serde_derive",
  "unicode-ident",
 ]
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rsa"

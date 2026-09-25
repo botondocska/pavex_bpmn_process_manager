@@ -11,8 +11,14 @@ pub const NAV_ITEMS: &[NavItem] = &[
         label: "Home page",
     },
     NavItem {
+        key: "processes",
+        path: "/processes/upload",
+        label: "Processes",
+    },
+    NavItem {
         key: "logout",
         path: "/logout",
         label: "Logout",
     },
+
 ];
