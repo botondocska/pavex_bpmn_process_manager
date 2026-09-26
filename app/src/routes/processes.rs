@@ -322,7 +322,7 @@ pub async fn instance_detail(
 pub struct AdvanceForm {
     pub token_id: String,
     #[serde(default)]
-    pub variables: std::collections::HashMap<String, String>,
+    pub need_task2: Option<String>,
 }
 
 #[post(path = "/processes/instances/{id}/advance")]
@@ -345,7 +345,7 @@ pub async fn advance_instance(
         ..Default::default()
     };
 
-    let instance = process_store
+    let mut instance = process_store
         .load(&instance_id)
         .await
         .map_err(ProcessStartError::UnexpectedError)?
@@ -357,13 +357,41 @@ pub async fn advance_instance(
         .map(|t| t.node_id.clone())
         .ok_or(ProcessStartError::NotFound)?;
 
+    // WORKAROUND: bpm-engine-runtime 0.2.0's UserTaskCompletedHandler drops
+    // the `variables` carried on the UserTaskCompleted event -- it moves
+    // tokens and saves the instance, but never merges `e.variables` into
+    // `instance.variables`. Confirmed from crate source (user_task_completed_handler.rs):
+    // https://docs.rs/bpm-engine-runtime/0.2.0/src/bpm_engine_runtime/user_task_completed_handler.rs.html
+    // Without this, any downstream exclusive gateway reading instance
+    // variables sees an empty map and dead-ends (its evaluate_exclusive_gateway
+    // returns None with no default flow, silently, with no error).
+    // We persist the variable ourselves, into the same store/column the
+    // gateway reads from, before triggering the engine.
+    let mut variables = instance.variables.clone();
+    if let Some(need_task2) = &body.0.need_task2 {
+        variables.insert("need_task2".to_string(), need_task2.clone());
+    }
+    if variables != instance.variables {
+        instance.variables = variables;
+        process_store
+            .save(&instance)
+            .await
+            .map_err(ProcessStartError::UnexpectedError)?;
+    }
+
     engine
         .run_async(
             EngineEvent::UserTaskCompleted(payloads::UserTaskCompleted {
                 task_id: token_id.clone(),
                 instance_id: instance_id.clone(),
                 node_id,
-                variables: body.0.variables.clone(),
+                variables: {
+                    let mut v = std::collections::HashMap::new();
+                    if let Some(need_task2) = &body.0.need_task2 {
+                        v.insert("need_task2".to_string(), need_task2.clone());
+                    }
+                    v
+                },
             }),
             &mut ctx,
         )
