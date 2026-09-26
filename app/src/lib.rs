@@ -4,6 +4,7 @@
 mod blueprint;
 pub use blueprint::blueprint;
 pub mod configuration;
+pub mod engine_def_store;
 pub mod pg_process_store;
 pub mod routes;
 pub mod session;

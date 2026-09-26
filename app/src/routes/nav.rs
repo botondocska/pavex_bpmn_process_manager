@@ -12,13 +12,17 @@ pub const NAV_ITEMS: &[NavItem] = &[
     },
     NavItem {
         key: "processes",
-        path: "/processes/upload",
+        path: "/processes",
         label: "Processes",
+    },
+    NavItem {
+        key: "instances",
+        path: "/processes/instances",
+        label: "Instances",
     },
     NavItem {
         key: "logout",
         path: "/logout",
         label: "Logout",
     },
-
 ];

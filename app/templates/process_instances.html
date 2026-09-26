@@ -1,0 +1,29 @@
+{% extends "nav.html" %}
+{% block title %}Process Instances{% endblock %}
+{% block page_content %}
+<div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-6">
+  <h1 class="text-2xl font-bold mb-4">Process Instances</h1>
+  {% if instances.is_empty() %}
+  <p class="text-sm opacity-70">No instances yet.</p>
+  {% else %}
+  <table class="table w-full">
+    <thead>
+      <tr>
+        <th>Instance ID</th>
+        <th>Process</th>
+        <th>State</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for instance in instances %}
+      <tr>
+        <td><a class="link link-primary" href="/processes/instances/{{ instance.id }}">{{ instance.id }}</a></td>
+        <td>{{ instance.process_def_id }}</td>
+        <td>{{ instance.state }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

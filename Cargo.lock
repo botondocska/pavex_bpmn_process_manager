@@ -91,6 +91,7 @@ dependencies = [
  "async-trait",
  "bpm-engine-bpmn",
  "bpm-engine-core",
+ "bpm-engine-runtime",
  "bpm-engine-storage",
  "cargo_px_env",
  "humantime-serde",
@@ -329,6 +330,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "bpm-engine-runtime"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9457a9a281acc14d7a8f565c0095424e860024ea0c5f306992350b50d8ec7dcb"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bpm-engine-core",
+ "bpm-engine-storage",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2698,6 +2716,7 @@ version = "0.1.0"
 dependencies = [
  "app",
  "biscotti",
+ "bpm-engine-runtime",
  "http",
  "hyper",
  "matchit",

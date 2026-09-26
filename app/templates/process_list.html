@@ -1,0 +1,37 @@
+{% extends "nav.html" %}
+{% block title %}Processes{% endblock %}
+{% block page_content %}
+<div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-6 space-y-4">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold">Processes</h1>
+    <a href="/processes/upload" class="btn btn-primary btn-sm">Upload new</a>
+  </div>
+
+  {% if processes.is_empty() %}
+  <p class="text-sm opacity-70">No processes uploaded yet.</p>
+  {% else %}
+  <table class="table w-full">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Uploaded</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for process in processes %}
+      <tr>
+        <td>{{ process.name }}</td>
+        <td class="text-sm opacity-70">{{ process.created_at }}</td>
+        <td>
+          <form hx-post="/processes/{{ process.id }}/start" class="inline">
+            <button type="submit" class="btn btn-primary btn-sm">Start</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

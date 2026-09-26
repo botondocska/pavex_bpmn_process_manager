@@ -113,3 +113,52 @@ impl DatabaseConfig {
         Ok(SessionStore::new(backend))
     }
 }
+
+// TODO: InstanceState/TokenStatus/TokenMode
+// mapping, process_uuid generated column, etc.) before these compile.
+use crate::engine_def_store::PgProcessDefinitionStore;
+use crate::pg_process_store::{PgProcessInstanceStore, PgTokenStore};
+use bpm_engine_runtime::{
+    BpmEngine, ProcessCompletedHandler, ProcessStartHandler, TokenArrivedHandler,
+};
+use std::sync::Arc;
+
+#[pavex::methods]
+impl PgProcessInstanceStore {
+    #[pavex::singleton]
+    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
+        Arc::new(Self::new(pool.clone()))
+    }
+}
+
+#[pavex::methods]
+impl PgTokenStore {
+    #[pavex::singleton]
+    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
+        Arc::new(Self::new(pool.clone()))
+    }
+}
+
+#[pavex::methods]
+impl PgProcessDefinitionStore {
+    #[pavex::singleton]
+    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
+        Arc::new(Self::new(pool.clone()))
+    }
+}
+
+// TODO: ProcessCompletedHandler needed here. No source found for it under
+// bpm-engine-core 0.2.0 or bpm-engine-runtime 0.2.0 in three searches so
+// far (only ProcessStartHandler, TokenArrivedHandler, HistoryHandler
+// confirmed real). Likely module: bpm_engine_runtime::process_completed_handler
+// -- try that import; if it doesn't exist, ProcessCompleted events may just
+// need a handler you write yourself: match EngineEvent::ProcessCompleted,
+// load instance, set state = InstanceState::Completed, process_store.save().
+#[pavex::singleton]
+pub fn bpm_engine() -> Arc<BpmEngine> {
+    Arc::new(BpmEngine::new(vec![
+        Box::new(ProcessStartHandler),
+        Box::new(TokenArrivedHandler::new()),
+        Box::new(ProcessCompletedHandler),
+    ]))
+}

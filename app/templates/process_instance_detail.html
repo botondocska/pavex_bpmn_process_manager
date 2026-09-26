@@ -1,0 +1,40 @@
+{% extends "nav.html" %}
+{% block title %}Instance {{ instance_id }}{% endblock %}
+{% block page_content %}
+<div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-6 space-y-4">
+  <h1 class="text-2xl font-bold">Instance {{ instance_id }}</h1>
+  <p class="text-sm opacity-70">State: {{ state }}</p>
+
+  {% if tokens.is_empty() %}
+  <p class="text-sm opacity-70">No tokens.</p>
+  {% else %}
+  <table class="table w-full">
+    <thead>
+      <tr>
+        <th>Token ID</th>
+        <th>Node</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for token in tokens %}
+      <tr>
+        <td>{{ token.id }}</td>
+        <td>{{ token.node_id }}</td>
+        <td>{{ token.status }}</td>
+        <td>
+          {% if token.status == "Waiting" %}
+          <form hx-post="/processes/instances/{{ instance_id }}/advance" class="inline">
+            <input type="hidden" name="token_id" value="{{ token.id }}">
+            <button type="submit" class="btn btn-primary btn-sm">Advance</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

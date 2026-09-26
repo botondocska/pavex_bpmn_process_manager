@@ -1,7 +1,7 @@
 //! Postgres implementations of `bpm-engine-storage`'s `ProcessInstanceStore`
 //! and `TokenStore` traits, backed by the `process_instances` and `tokens`
 //! tables (see migration `20260923000000_process_instances_and_tokens.sql`).
-/*
+
 use async_trait::async_trait;
 use bpm_engine_core::{InstanceState, ProcessInstance, Token, TokenMode, TokenStatus};
 use bpm_engine_storage::{ProcessInstanceStore, TokenStore};
@@ -164,20 +164,16 @@ impl ProcessInstanceStore for PgProcessInstanceStore {
 
     async fn list_running(&self, tenant_id: Option<&str>) -> anyhow::Result<Vec<String>> {
         let ids = match tenant_id {
-            Some(t) => {
-                sqlx::query_scalar!(
-                    r#"SELECT id FROM process_instances WHERE state = 'Running' AND tenant_id = $1"#,
-                    t,
-                )
-                .fetch_all(&self.pool)
-                .await?
-            }
+            Some(t) => sqlx::query_scalar!(
+                r#"SELECT id FROM process_instances WHERE state = 'Running' AND tenant_id = $1"#,
+                t,
+            )
+            .fetch_all(&self.pool)
+            .await?,
             None => {
-                sqlx::query_scalar!(
-                    r#"SELECT id FROM process_instances WHERE state = 'Running'"#,
-                )
-                .fetch_all(&self.pool)
-                .await?
+                sqlx::query_scalar!(r#"SELECT id FROM process_instances WHERE state = 'Running'"#,)
+                    .fetch_all(&self.pool)
+                    .await?
             }
         };
         Ok(ids)
@@ -332,4 +328,3 @@ impl TokenStore for PgTokenStore {
         Ok(result.rows_affected() == 1)
     }
 }
-    */
