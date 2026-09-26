@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, process_def_id, state FROM process_instances ORDER BY updated_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "process_def_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "state",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b4caed378c32bc85d901d418b5fdb3dba15fc1d044266c460be2d7441465a316"
+}

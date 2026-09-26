@@ -120,6 +120,7 @@ use crate::engine_def_store::PgProcessDefinitionStore;
 use crate::pg_process_store::{PgProcessInstanceStore, PgTokenStore};
 use bpm_engine_runtime::{
     BpmEngine, ProcessCompletedHandler, ProcessStartHandler, TokenArrivedHandler,
+    UserTaskCompletedHandler,
 };
 use std::sync::Arc;
 
@@ -159,6 +160,7 @@ pub fn bpm_engine() -> Arc<BpmEngine> {
     Arc::new(BpmEngine::new(vec![
         Box::new(ProcessStartHandler),
         Box::new(TokenArrivedHandler::new()),
+        Box::new(UserTaskCompletedHandler),
         Box::new(ProcessCompletedHandler),
     ]))
 }

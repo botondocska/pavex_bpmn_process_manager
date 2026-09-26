@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, node_id, status, mode, version, attempt, parallel_group_id, updated_at\n        FROM tokens\n        WHERE instance_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "node_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "mode",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "attempt",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "parallel_group_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "11d39017978de238ac41d12709af215c2df8ee99b07c63ca7088afa34af4772b"
+}

@@ -2,7 +2,12 @@
 {% block title %}Instance {{ instance_id }}{% endblock %}
 {% block page_content %}
 <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-6 space-y-4">
-  <h1 class="text-2xl font-bold">Instance {{ instance_id }}</h1>
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold">Instance {{ instance_id }}</h1>
+    <form hx-post="/processes/instances/{{ instance_id }}/delete" hx-confirm="Delete this instance?">
+      <button type="submit" class="btn btn-error btn-sm">Delete instance</button>
+    </form>
+  </div>
   <p class="text-sm opacity-70">State: {{ state }}</p>
 
   {% if tokens.is_empty() %}
@@ -24,7 +29,7 @@
         <td>{{ token.node_id }}</td>
         <td>{{ token.status }}</td>
         <td>
-          {% if token.status == "Waiting" %}
+          {% if token.status == "Waiting" && token.is_user_task %}
           <form hx-post="/processes/instances/{{ instance_id }}/advance" class="inline">
             <input type="hidden" name="token_id" value="{{ token.id }}">
             <button type="submit" class="btn btn-primary btn-sm">Advance</button>

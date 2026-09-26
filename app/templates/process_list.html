@@ -27,6 +27,9 @@
           <form hx-post="/processes/{{ process.id }}/start" class="inline">
             <button type="submit" class="btn btn-primary btn-sm">Start</button>
           </form>
+          <form hx-post="/processes/{{ process.id }}/delete" hx-confirm="Delete this process?" class="inline">
+            <button type="submit" class="btn btn-error btn-sm">Delete</button>
+          </form>
         </td>
       </tr>
       {% endfor %}

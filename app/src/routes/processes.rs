@@ -4,7 +4,7 @@ use crate::session::theme::Theme;
 use askama::Template;
 use bpm_engine_core::event::{EngineEvent, payloads};
 use bpm_engine_runtime::{BpmEngine, EngineContext};
-use bpm_engine_storage::process_store::ProcessInstanceStore;
+use bpm_engine_storage::{ProcessDefinitionStore, process_store::ProcessInstanceStore};
 use pavex::request::body::UrlEncodedBody;
 use pavex::request::path::PathParams;
 use pavex::response::body::Html;
@@ -261,6 +261,7 @@ struct TokenRow {
     id: String,
     node_id: String,
     status: String,
+    is_user_task: bool,
 }
 
 #[get(path = "/processes/instances/{id}")]
@@ -269,6 +270,7 @@ pub async fn instance_detail(
     params: &PathParams<InstanceIdParams>,
     theme: Theme,
     process_store: &Arc<crate::pg_process_store::PgProcessInstanceStore>,
+    def_store: &Arc<crate::engine_def_store::PgProcessDefinitionStore>,
 ) -> Result<Response, ProcessStartError> {
     let instance = process_store
         .load(&params.0.id)
@@ -276,13 +278,27 @@ pub async fn instance_detail(
         .map_err(ProcessStartError::UnexpectedError)?
         .ok_or(ProcessStartError::NotFound)?;
 
+    let def = def_store
+        .load(&instance.process_def_id)
+        .await
+        .map_err(ProcessStartError::UnexpectedError)?
+        .ok_or(ProcessStartError::NotFound)?;
+
     let tokens = instance
         .tokens
         .iter()
-        .map(|t| TokenRow {
-            id: t.id.clone(),
-            node_id: t.node_id.clone(),
-            status: format!("{:?}", t.status),
+        .map(|t| {
+            let is_user_task = def
+                .nodes
+                .get(t.node_id.as_str())
+                .map(|n| matches!(n.node_type, bpm_engine_core::node::NodeType::UserTask))
+                .unwrap_or(false);
+            TokenRow {
+                id: t.id.clone(),
+                node_id: t.node_id.clone(),
+                status: format!("{:?}", t.status),
+                is_user_task,
+            }
         })
         .collect();
 
@@ -423,4 +439,53 @@ pub async fn list_processes(
     .map_err(|e| ProcessUploadError::UnexpectedError(e.into()))?;
     let html: Html = body.into();
     Ok(Response::ok().set_typed_body(html))
+}
+
+#[post(path = "/processes/{id}/delete")]
+pub async fn delete_process(
+    _user: &CheckedInUser,
+    params: &PathParams<ProcessIdParams>,
+    db_pool: &PgPool,
+) -> Result<Response, ProcessStartError> {
+    let process_id = params.0.id;
+
+    let result = sqlx::query!(r#"DELETE FROM processes WHERE id = $1"#, process_id)
+        .execute(db_pool)
+        .await
+        .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ProcessStartError::NotFound);
+    }
+
+    Ok(Response::ok().insert_header(
+        pavex::http::header::HeaderName::from_static("hx-redirect"),
+        pavex::http::HeaderValue::from_static("/processes"),
+    ))
+}
+
+#[post(path = "/processes/instances/{id}/delete")]
+pub async fn delete_instance(
+    _user: &CheckedInUser,
+    params: &PathParams<InstanceIdParams>,
+    db_pool: &PgPool,
+) -> Result<Response, ProcessStartError> {
+    let instance_id = &params.0.id;
+
+    let result = sqlx::query!(
+        r#"DELETE FROM process_instances WHERE id = $1"#,
+        instance_id
+    )
+    .execute(db_pool)
+    .await
+    .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ProcessStartError::NotFound);
+    }
+
+    Ok(Response::ok().insert_header(
+        pavex::http::header::HeaderName::from_static("hx-redirect"),
+        pavex::http::HeaderValue::from_static("/processes/instances"),
+    ))
 }
