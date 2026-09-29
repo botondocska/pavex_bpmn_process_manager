@@ -30,8 +30,18 @@
         <td>{{ token.status }}</td>
         <td>
           {% if token.status == "Waiting" && token.is_user_task %}
-          <form hx-post="/processes/instances/{{ instance_id }}/advance" class="inline">
+          <form hx-post="/processes/instances/{{ instance_id }}/advance" class="inline-flex items-end gap-2 flex-wrap">
             <input type="hidden" name="token_id" value="{{ token.id }}">
+            {% for choice in token.gateway_choices %}
+            <label class="flex flex-col text-xs gap-1">
+              <span class="opacity-70">{{ choice.key }}</span>
+              <select name="{{ choice.key }}" class="select select-bordered select-sm">
+                {% for v in choice.values %}
+                <option value="{{ v }}">{{ v }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            {% endfor %}
             <button type="submit" class="btn btn-primary btn-sm">Advance</button>
           </form>
           {% endif %}
@@ -41,5 +51,46 @@
     </tbody>
   </table>
   {% endif %}
+
+  <div class="border border-base-300 rounded-lg p-2">
+    <div id="instance-canvas" class="w-full" style="height: 420px;"></div>
+  </div>
 </div>
+
+<style>
+  .bpmn-active-node .djs-visual > :nth-child(1) {
+    stroke: oklch(68% 0.185 149) !important;
+    stroke-width: 4px !important;
+  }
+  .bpmn-marker-label {
+    background: oklch(68% 0.185 149);
+    color: black;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    white-space: nowrap;
+  }
+</style>
+<script src="https://unpkg.com/bpmn-js@17/dist/bpmn-viewer.development.js"></script>
+<script>
+  (async () => {
+    const xml = {{ bpmn_xml_json|safe }};
+    const marker = {{ marker_json|safe }};
+    const viewer = new BpmnJS({ container: '#instance-canvas' });
+    try {
+      await viewer.importXML(xml);
+      const canvas = viewer.get('canvas');
+      canvas.zoom('fit-viewport');
+      if (marker) {
+        canvas.addMarker(marker.node_id, 'bpmn-active-node');
+        viewer.get('overlays').add(marker.node_id, {
+          position: { bottom: -6, left: 0 },
+          html: `<span class="bpmn-marker-label">${marker.label}</span>`
+        });
+      }
+    } catch (err) {
+      console.error('Failed to render instance diagram', err);
+    }
+  })();
+</script>
 {% endblock %}
