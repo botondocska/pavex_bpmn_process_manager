@@ -1,11 +1,15 @@
 pub mod advance;
 pub mod detail;
+pub mod editor;
+pub mod export;
 pub mod list;
 pub mod start;
 pub mod upload;
 
 pub use advance::advance_instance;
 pub use detail::instance_detail;
+pub use editor::process_editor;
+pub use export::export_process;
 pub use list::{delete_instance, delete_process, list_instances, list_processes};
 pub use start::start_process;
 pub use upload::{process_upload, process_upload_form};
@@ -111,7 +115,7 @@ pub(crate) struct GatewayChoice {
 }
 
 /// If the node immediately downstream of `from_node_id` is an ExclusiveGateway,
-/// return the set of (key, [values]) choices a user must supply to route
+/// return the set of (key, \[values\]) choices a user must supply to route
 /// through it. Returns Ok(None) if there's no gateway there (nothing to ask),
 /// or if the gateway exists but every edge is unconditional (nothing to
 /// choose). Returns Err if the gateway exists and has a condition that
@@ -122,38 +126,44 @@ pub(crate) fn gateway_choices_after(
     def: &bpm_engine_core::node::ProcessDefinition,
     from_node_id: &str,
 ) -> Result<Option<Vec<GatewayChoice>>, String> {
+    use bpm_engine_core::node::NodeType;
+    use std::collections::HashSet;
+
     let from_node = def
         .nodes
         .get(from_node_id)
         .ok_or_else(|| format!("node {from_node_id} not found in definition"))?;
 
-    let Some(next_edge) = from_node.outgoing_edges.first() else {
-        return Ok(None);
-    };
-    let Some(next_node) = def.nodes.get(next_edge.target) else {
-        return Ok(None);
-    };
-    if !matches!(
-        next_node.node_type,
-        bpm_engine_core::node::NodeType::ExclusiveGateway
-    ) {
-        return Ok(None);
-    }
-
     let mut grouped: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for edge in &next_node.outgoing_edges {
-        match &edge.condition {
-            None => { /* unconditional edge -- gateway isn't actually a choice point */ }
-            Some(EdgeCondition::Default) => { /* fallback edge, not itself a choice */ }
-            Some(cond) => {
-                let (key, value) = parse_edge_condition(cond).ok_or_else(|| {
-                    format!(
-                        "gateway {} has an unparseable condition on edge to {}: {:?}",
-                        next_node.id, edge.target, cond
-                    )
-                })?;
-                grouped.entry(key).or_default().push(value);
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut stack: Vec<&str> = from_node.outgoing_edges.iter().map(|e| e.target).collect();
+
+    // Follow consecutive ExclusiveGateways through every branch.
+    // Stop at any other node type: a user task later asks for its own input.
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id) {
+            continue; // loop-back guard
+        }
+        let Some(node) = def.nodes.get(id) else {
+            continue;
+        };
+        if !matches!(node.node_type, NodeType::ExclusiveGateway) {
+            continue;
+        }
+        for edge in &node.outgoing_edges {
+            match &edge.condition {
+                None | Some(EdgeCondition::Default) => {}
+                Some(cond) => {
+                    let (key, value) = parse_edge_condition(cond).ok_or_else(|| {
+                        format!(
+                            "gateway {} has an unparseable condition on edge to {}: {:?}",
+                            node.id, edge.target, cond
+                        )
+                    })?;
+                    grouped.entry(key).or_default().push(value);
+                }
             }
+            stack.push(edge.target);
         }
     }
 
@@ -161,15 +171,16 @@ pub(crate) fn gateway_choices_after(
         return Ok(None);
     }
 
-    let choices = grouped
-        .into_iter()
-        .map(|(key, mut values)| {
-            values.sort();
-            values.dedup();
-            GatewayChoice { key, values }
-        })
-        .collect();
-    Ok(Some(choices))
+    Ok(Some(
+        grouped
+            .into_iter()
+            .map(|(key, mut values)| {
+                values.sort();
+                values.dedup();
+                GatewayChoice { key, values }
+            })
+            .collect(),
+    ))
 }
 
 // ---------- Diagram active-marker discovery ----------
@@ -261,15 +272,16 @@ pub(crate) fn pick_active_marker(
 
     let first = candidates.first()?;
     let extra = candidates.len() - 1;
-    let label = if extra == 0 {
-        "Waiting".to_string()
-    } else {
-        format!("Waiting (+{extra} parallel)")
+    let (node_id, base) = match first.strip_suffix(crate::engine_def_store::DECISION_SUFFIX) {
+        Some(g) => (g.to_string(), "Decision needed"),
+        None => (first.to_string(), "Waiting"),
     };
-    Some(ActiveMarker {
-        node_id: (*first).to_string(),
-        label,
-    })
+    let label = if extra == 0 {
+        base.to_string()
+    } else {
+        format!("{base} (+{extra} parallel)")
+    };
+    Some(ActiveMarker { node_id, label })
 }
 
 /// Escape `</` so embedding this JSON inside a `<script>` block can't be

@@ -93,7 +93,13 @@ pub async fn instance_detail(
 
         tokens.push(TokenRow {
             id: t.id.clone(),
-            node_id: t.node_id.clone(),
+            node_id: match t
+                .node_id
+                .strip_suffix(crate::engine_def_store::DECISION_SUFFIX)
+            {
+                Some(g) => format!("{g} (decision)"),
+                None => t.node_id.clone(),
+            },
             status: format!("{:?}", t.status),
             is_user_task,
             gateway_choices,

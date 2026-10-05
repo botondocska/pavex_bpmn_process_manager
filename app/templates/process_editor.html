@@ -1,0 +1,268 @@
+{% extends "nav.html" %}
+{% block title %}BPMN Editor{% endblock %}
+{% block page_content %}
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17/dist/assets/diagram-js.css">
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17/dist/assets/bpmn-js.css">
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17/dist/assets/bpmn-font/css/bpmn.css">
+<style>
+  .bpmn-flow-condition {
+    display: inline-block;
+    transform: translate(-50%, -120%);
+    background: var(--color-base-100);
+    color: var(--color-base-content);
+    border: 1px solid var(--color-base-300);
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    padding: 1px 6px;
+    border-radius: 9999px;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+</style>
+
+<div class="space-y-4">
+  <div class="bg-base-100 border border-base-300 p-4 rounded-lg shadow-md flex flex-wrap items-center gap-3">
+    <input id="process-name" type="text" placeholder="Process name" class="input input-bordered">
+    <button id="save-btn" class="btn btn-primary">Save</button>
+    <button id="export-btn" class="btn btn-secondary">Export XML</button>
+    <button id="import-btn" class="btn btn-secondary">Import file</button>
+    <input id="import-file" type="file" accept=".bpmn,.xml" class="hidden">
+    <span class="text-xs opacity-70">Supported: start, end, user task, service task, exclusive gateway, parallel gateway, pool, lane, group.</span>
+  </div>
+
+  <div id="flow-panel" class="bg-base-100 border border-base-300 p-4 rounded-lg shadow-md hidden">
+    <label class="flex flex-col text-xs gap-1">
+      <span class="opacity-70">Flow condition (gateway edge). Format: key == "value". Empty = unconditional.</span>
+      <input id="flow-condition" type="text" placeholder='choice == "yes"' class="input input-bordered w-full font-mono">
+    </label>
+  </div>
+
+  <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-2">
+    <div id="editor-canvas" class="w-full" style="height: 600px;"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/bpmn-js@17/dist/bpmn-modeler.development.js"></script>
+<script>
+  // ---- Allowlists: edit here when engine gains node types ----
+  const ALLOWED_TYPES = new Set([
+    'bpmn:Process', 'bpmn:Collaboration', 'bpmn:Participant', 'bpmn:Lane', 'bpmn:Group',
+    'bpmn:StartEvent', 'bpmn:EndEvent', 'bpmn:UserTask', 'bpmn:ServiceTask',
+    'bpmn:ExclusiveGateway', 'bpmn:ParallelGateway', 'bpmn:SequenceFlow',
+  ]);
+  const PALETTE_KEEP = new Set([
+    'hand-tool', 'lasso-tool', 'space-tool', 'global-connect-tool', 'tool-separator',
+    'create.start-event', 'create.end-event', 'create.exclusive-gateway',
+    'create.participant-expanded', 'create.group',
+  ]);
+  const PAD_KEEP = new Set([
+    'append.end-event', 'append.gateway', 'connect', 'replace', 'delete',
+    'lane-insert-above', 'lane-insert-below', 'lane-divide-two', 'lane-divide-three',
+  ]);
+  const REPLACE_KEEP = new Set([
+    'replace-with-none-start', 'replace-with-none-end',
+    'replace-with-user-task', 'replace-with-service-task',
+    'replace-with-exclusive-gateway', 'replace-with-parallel-gateway',
+  ]);
+
+  const BLANK_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_1" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_1">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="180" y="160" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+  // ---- Custom module: filters palette, context pad, replace menu ----
+  function Restrict(palette, contextPad, popupMenu, create, elementFactory, autoPlace) {
+    const newShape = (type) => elementFactory.createShape({ type });
+
+    palette.registerProvider(500, {
+      getPaletteEntries() {
+        return (entries) => {
+          const out = {};
+          for (const k of Object.keys(entries)) if (PALETTE_KEEP.has(k)) out[k] = entries[k];
+          const start = (type) => (event) => create.start(event, newShape(type));
+          out['create.user-task'] = {
+            group: 'activity', className: 'bpmn-icon-user-task', title: 'Create user task',
+            action: { dragstart: start('bpmn:UserTask'), click: start('bpmn:UserTask') },
+          };
+          out['create.service-task'] = {
+            group: 'activity', className: 'bpmn-icon-service-task', title: 'Create service task',
+            action: { dragstart: start('bpmn:ServiceTask'), click: start('bpmn:ServiceTask') },
+          };
+          out['create.parallel-gateway'] = {
+            group: 'gateway', className: 'bpmn-icon-gateway-parallel', title: 'Create parallel gateway',
+            action: { dragstart: start('bpmn:ParallelGateway'), click: start('bpmn:ParallelGateway') },
+          };
+          return out;
+        };
+      },
+    });
+
+    contextPad.registerProvider(500, {
+      getContextPadEntries(element) {
+        return (entries) => {
+          const out = {};
+          for (const k of Object.keys(entries)) if (PAD_KEEP.has(k)) out[k] = entries[k];
+          if (element.type !== 'bpmn:SequenceFlow' && element.type !== 'bpmn:EndEvent') {
+            out['append.user-task'] = {
+              group: 'model', className: 'bpmn-icon-user-task', title: 'Append user task',
+              action: {
+                click: (e, el) => autoPlace.append(el, newShape('bpmn:UserTask')),
+                dragstart: (e, el) => create.start(e, newShape('bpmn:UserTask'), { source: el }),
+              },
+            };
+            out['append.service-task'] = {
+              group: 'model', className: 'bpmn-icon-service-task', title: 'Append service task',
+              action: {
+                click: (e, el) => autoPlace.append(el, newShape('bpmn:ServiceTask')),
+                dragstart: (e, el) => create.start(e, newShape('bpmn:ServiceTask'), { source: el }),
+              },
+            };
+          }
+          return out;
+        };
+      },
+    });
+
+    popupMenu.registerProvider('bpmn-replace', 500, {
+      getPopupMenuEntries() {
+        return (entries) => {
+          const out = {};
+          for (const k of Object.keys(entries)) if (REPLACE_KEEP.has(k)) out[k] = entries[k];
+          return out;
+        };
+      },
+    });
+  }
+  Restrict.$inject = ['palette', 'contextPad', 'popupMenu', 'create', 'elementFactory', 'autoPlace'];
+
+  const modeler = new BpmnJS({
+    container: '#editor-canvas',
+    additionalModules: [{ __init__: ['restrict'], restrict: ['type', Restrict] }],
+  });
+
+  // ---- Validation ----
+  function unsupportedTypes() {
+    const bad = new Set();
+    for (const el of modeler.get('elementRegistry').getAll()) {
+      const t = el.businessObject && el.businessObject.$type;
+      if (!t || t.startsWith('bpmndi:') || el.labelTarget) continue;
+      if (!ALLOWED_TYPES.has(t)) bad.add(t);
+    }
+    return [...bad];
+  }
+
+  function showError(msg) {
+    document.getElementById('error-dialog-message').textContent = msg;
+    document.getElementById('error-dialog').showModal();
+  }
+
+  // ---- Show gateway conditions on arrows (overlays; XML untouched) ----
+  function showFlowConditions(viewer) {
+    const overlays = viewer.get('overlays');
+    overlays.remove({ type: 'flow-condition' });
+    for (const el of viewer.get('elementRegistry').filter((e) => e.type === 'bpmn:SequenceFlow')) {
+      const expr = el.businessObject.conditionExpression;
+      const text = expr && expr.body ? expr.body.trim().replace(/^\$\{\s*|\s*\}$/g, '') : '';
+      if (!text) continue;
+      const span = document.createElement('span'); // DOM node + textContent: no HTML injection
+      span.className = 'bpmn-flow-condition';
+      span.textContent = text;
+      overlays.add(el, 'flow-condition', { position: { left: 0, top: 0 }, html: span });
+    }
+  }
+  modeler.on('import.done', () => showFlowConditions(modeler));
+  modeler.on('commandStack.changed', () => showFlowConditions(modeler));
+
+  // ---- Gateway edge condition input ----
+  const panel = document.getElementById('flow-panel');
+  const condInput = document.getElementById('flow-condition');
+  let selectedFlow = null;
+
+  modeler.on('selection.changed', ({ newSelection }) => {
+    const el = newSelection[0];
+    if (el && el.type === 'bpmn:SequenceFlow' && el.source && el.source.type === 'bpmn:ExclusiveGateway') {
+      selectedFlow = el;
+      const expr = el.businessObject.conditionExpression;
+      condInput.value = expr ? expr.body : '';
+      panel.classList.remove('hidden');
+    } else {
+      selectedFlow = null;
+      panel.classList.add('hidden');
+    }
+  });
+
+  condInput.addEventListener('change', () => {
+    if (!selectedFlow) return;
+    const v = condInput.value.trim();
+    const expr = v ? modeler.get('moddle').create('bpmn:FormalExpression', { body: v }) : undefined;
+    modeler.get('modeling').updateProperties(selectedFlow, { conditionExpression: expr });
+  });
+
+  // ---- Save ----
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    const name = document.getElementById('process-name').value.trim();
+    if (!name) return showError('Process name required.');
+
+    const bad = unsupportedTypes();
+    if (bad.length) return showError('Unsupported element types: ' + bad.join(', '));
+
+    const pools = modeler.get('elementRegistry').filter((e) => e.type === 'bpmn:Participant');
+    if (pools.length > 1) return showError('Engine supports one participant per process.');
+
+    const { xml } = await modeler.saveXML({ format: true });
+    const res = await fetch('/processes/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name, bpmn_xml: xml }),
+    });
+    if (!res.ok) return showError(await res.text());
+    window.location.href = '/processes';
+  });
+
+  // ---- Export: no validation, so broken diagrams can still be inspected ----
+  document.getElementById('export-btn').addEventListener('click', async () => {
+    const { xml } = await modeler.saveXML({ format: true });
+    const name = document.getElementById('process-name').value.trim() || 'process';
+    const url = URL.createObjectURL(new Blob([xml], { type: 'application/xml' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name.replace(/[^\w.-]+/g, '_') + '.bpmn';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  // ---- Import: load a local .bpmn/.xml file into the editor ----
+  const importFile = document.getElementById('import-file');
+  document.getElementById('import-btn').addEventListener('click', () => importFile.click());
+
+  importFile.addEventListener('change', async (evt) => {
+    const file = evt.target.files[0];
+    evt.target.value = ''; // allow re-importing the same file
+    if (!file) return;
+    try {
+      await modeler.importXML(await file.text());
+    } catch (err) {
+      return showError('Could not read BPMN file: ' + err.message);
+    }
+    modeler.get('canvas').zoom('fit-viewport');
+    const nameInput = document.getElementById('process-name');
+    if (!nameInput.value.trim()) nameInput.value = file.name.replace(/\.(bpmn|xml)$/i, '');
+    // Keep the diagram loaded so unsupported elements can be fixed in place.
+    const bad = unsupportedTypes();
+    if (bad.length) showError('Imported, but unsupported element types present: ' + bad.join(', '));
+  });
+
+  modeler.importXML(BLANK_XML).then(() => modeler.get('canvas').zoom('fit-viewport'));
+</script>
+{% endblock %}

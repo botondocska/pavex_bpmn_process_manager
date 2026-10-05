@@ -20,9 +20,4 @@ pub const NAV_ITEMS: &[NavItem] = &[
         path: "/processes/instances",
         label: "Instances",
     },
-    NavItem {
-        key: "logout",
-        path: "/logout",
-        label: "Logout",
-    },
 ];
