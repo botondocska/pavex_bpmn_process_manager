@@ -18,6 +18,12 @@
     white-space: nowrap;
     pointer-events: none;
   }
+  .bpmn-task-type {
+    display: inline-block; font-size: 11px; font-family: ui-monospace, monospace;
+    padding: 1px 6px; border-radius: 9999px; white-space: nowrap; pointer-events: none;
+    background: var(--color-base-100); color: var(--color-base-content);
+    border: 1px solid var(--color-base-300);
+  }
 </style>
 
 <div class="space-y-4">
@@ -37,6 +43,13 @@
     </label>
   </div>
 
+  <div id="task-panel" class="bg-base-100 border border-base-300 p-4 rounded-lg shadow-md hidden">
+    <label class="flex flex-col text-xs gap-1">
+      <span class="opacity-70">Service task type. Timer: timer:30s / timer:5m / timer:2h / timer:1d. Other values wait for a worker.</span>
+      <input id="task-type" type="text" placeholder="timer:30s" class="input input-bordered w-full font-mono">
+    </label>
+  </div>
+  
   <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-2">
     <div id="editor-canvas" class="w-full" style="height: 600px;"></div>
   </div>
@@ -78,6 +91,18 @@
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`;
+
+  const CAMUNDA_EXT = {
+    name: 'Camunda',
+    uri: 'http://camunda.org/schema/1.0/bpmn',   // must match parser CAMUNDA_NS
+    prefix: 'camunda',
+    xml: { tagAlias: 'lowerCase' },
+    types: [{
+      name: 'ServiceTaskExt',
+      extends: ['bpmn:ServiceTask'],
+      properties: [{ name: 'topic', isAttr: true, type: 'String' }],
+    }],
+  };
 
   // ---- Custom module: filters palette, context pad, replace menu ----
   function Restrict(palette, contextPad, popupMenu, create, elementFactory, autoPlace) {
@@ -147,6 +172,7 @@
   const modeler = new BpmnJS({
     container: '#editor-canvas',
     additionalModules: [{ __init__: ['restrict'], restrict: ['type', Restrict] }],
+    moddleExtensions: { camunda: CAMUNDA_EXT },
   });
 
   // ---- Validation ----
@@ -157,6 +183,16 @@
       if (!t || t.startsWith('bpmndi:') || el.labelTarget) continue;
       if (!ALLOWED_TYPES.has(t)) bad.add(t);
     }
+    const badTasks = modeler.get('elementRegistry')
+      .filter((e) => e.type === 'bpmn:ServiceTask')
+      .filter((e) => {
+        const t = (e.businessObject.get('camunda:topic') || '').trim();
+        return !t || (t.startsWith('timer:') && !/^timer:[1-9]\d*[smhd]$/.test(t));
+      });
+    if (badTasks.length) {
+      return showError('Service task needs a valid task type (timer:30s, 5m, 2h, 1d): ' + badTasks.map((e) => e.id).join(', '));
+    }
+
     return [...bad];
   }
 
@@ -178,26 +214,44 @@
       span.textContent = text;
       overlays.add(el, 'flow-condition', { position: { left: 0, top: 0 }, html: span });
     }
+
+    overlays.remove({ type: 'task-type' });
+    for (const el of viewer.get('elementRegistry').filter((e) => e.type === 'bpmn:ServiceTask')) {
+      const span = document.createElement('span');
+      span.className = 'bpmn-task-type';
+      span.textContent = el.businessObject.get('camunda:topic') || '⚠ no task type';
+      overlays.add(el, 'task-type', { position: { bottom: -4, left: 0 }, html: span });
+    }
   }
   modeler.on('import.done', () => showFlowConditions(modeler));
   modeler.on('commandStack.changed', () => showFlowConditions(modeler));
 
   // ---- Gateway edge condition input ----
   const panel = document.getElementById('flow-panel');
-  const condInput = document.getElementById('flow-condition');
+  const taskInput = document.getElementById('task-type');
   let selectedFlow = null;
 
   modeler.on('selection.changed', ({ newSelection }) => {
     const el = newSelection[0];
+    selectedFlow = null; selectedTask = null;
+    panel.classList.add('hidden'); taskPanel.classList.add('hidden');
     if (el && el.type === 'bpmn:SequenceFlow' && el.source && el.source.type === 'bpmn:ExclusiveGateway') {
       selectedFlow = el;
       const expr = el.businessObject.conditionExpression;
       condInput.value = expr ? expr.body : '';
       panel.classList.remove('hidden');
-    } else {
-      selectedFlow = null;
-      panel.classList.add('hidden');
+    } else if (el && el.type === 'bpmn:ServiceTask') {
+      selectedTask = el;
+      taskInput.value = el.businessObject.get('camunda:topic') || '';
+      taskPanel.classList.remove('hidden');
     }
+  });
+
+  taskInput.addEventListener('change', () => {
+    if (!selectedTask) return;
+    modeler.get('modeling').updateProperties(selectedTask, {
+      'camunda:topic': taskInput.value.trim() || undefined,
+    });
   });
 
   condInput.addEventListener('change', () => {

@@ -164,3 +164,21 @@ pub fn bpm_engine() -> Arc<BpmEngine> {
         Box::new(ProcessCompletedHandler),
     ]))
 }
+
+#[derive(serde::Deserialize, Debug, Clone)]
+#[config(key = "timer", include_if_unused)]
+pub struct TimerConfig {
+    pub enabled: bool,
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: std::time::Duration,
+}
+
+use crate::pg_external_task_store::PgExternalTaskStore;
+
+#[pavex::methods]
+impl PgExternalTaskStore {
+    #[pavex::singleton]
+    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
+        Arc::new(Self::new(pool.clone()))
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE tokens\n            SET status = $1, mode = $2, version = version + 1, attempt = $3,\n                parallel_group_id = $4, updated_at = now()\n            WHERE instance_id = $5 AND id = $6 AND version = $7\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Int4",
+        "Varchar",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "32602998a283faf64f6717fe29110ac7660c114bd879ca196b14ae19bcf6bcdf"
+}

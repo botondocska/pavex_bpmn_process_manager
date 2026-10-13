@@ -46,8 +46,9 @@ pub async fn process_upload(
 ) -> Result<Response, ProcessUploadError> {
     let ProcessUploadForm { name, bpmn_xml } = &body.0;
 
-    bpm_engine_bpmn::parse_and_compile(bpmn_xml)
+    let def = bpm_engine_bpmn::parse_and_compile(bpmn_xml)
         .map_err(|e| ProcessUploadError::InvalidBpmn(e.to_string()))?;
+    crate::timer::validate_definition(&def).map_err(ProcessUploadError::InvalidBpmn)?;
 
     let process_id = insert_process(user.0, name, bpmn_xml, db_pool).await?;
 

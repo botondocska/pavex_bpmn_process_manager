@@ -12,3 +12,7 @@ cookies:
       algorithm: "encryption"
       key: "7a35033bffa439f75f77e6022115f9a3b3b6efbf5c8d93998aeca36039823ab440ed55b94f6e60a622b27d12a65a530943bd8f37b31e1e29ad12ff5be3e28fb8"
       fallbacks: []
+
+timer:
+  enabled: true
+  poll_interval: "5 seconds"

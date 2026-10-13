@@ -43,9 +43,17 @@ async fn _main() -> anyhow::Result<()> {
     let server_builder = Server::new().listen(tcp_listener);
     let shutdown_timeout = config.server.graceful_shutdown_timeout;
 
+    let timer_cfg = config.timer.clone();
+
     let application_state = ApplicationState::new(config)
         .await
         .context("Failed to build the application state")?;
+
+    app::timer::spawn_timer_loop(
+        timer_cfg,
+        application_state.pool.clone(),
+        application_state.arc_bpm_engine.clone(),
+    );
 
     tracing::info!("Starting to listen for incoming requests at {}", address);
     let server_handle = run(server_builder, application_state);

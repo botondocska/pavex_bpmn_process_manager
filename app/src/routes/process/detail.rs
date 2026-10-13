@@ -32,6 +32,7 @@ struct TokenRow {
     status: String,
     is_user_task: bool,
     gateway_choices: Vec<GatewayChoice>,
+    wait_label: Option<String>,
 }
 
 #[get(path = "/processes/instances/{id}")]
@@ -41,6 +42,7 @@ pub async fn instance_detail(
     theme: Theme,
     process_store: &Arc<crate::pg_process_store::PgProcessInstanceStore>,
     def_store: &Arc<crate::engine_def_store::PgProcessDefinitionStore>,
+    ext_store: &Arc<crate::pg_external_task_store::PgExternalTaskStore>,
     db_pool: &PgPool,
 ) -> Result<Response, ProcessStartError> {
     let instance = process_store
@@ -70,6 +72,24 @@ pub async fn instance_detail(
     .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
 
     let marker = pick_active_marker(&def, &instance);
+
+    let wait_labels: std::collections::HashMap<String, String> = ext_store
+        .pending_for_instance(&instance.id)
+        .await
+        .map_err(ProcessStartError::UnexpectedError)?
+        .into_iter()
+        .map(|(token_id, task_type, due)| {
+            let label = if task_type.starts_with(crate::timer::TIMER_PREFIX) {
+                let when = due
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_else(|_| due.to_string());
+                format!("Timer {task_type}, due {when}")
+            } else {
+                format!("Waiting on worker: {task_type}")
+            };
+            (token_id, label)
+        })
+        .collect();
 
     let mut tokens = Vec::with_capacity(instance.tokens.len());
     for t in &instance.tokens {
@@ -103,6 +123,7 @@ pub async fn instance_detail(
             status: format!("{:?}", t.status),
             is_user_task,
             gateway_choices,
+            wait_label: wait_labels.get(&t.id).cloned(),
         });
     }
 

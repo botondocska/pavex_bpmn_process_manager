@@ -1,4 +1,5 @@
 pub mod advance;
+pub mod cancel;
 pub mod detail;
 pub mod editor;
 pub mod export;
@@ -7,6 +8,7 @@ pub mod start;
 pub mod upload;
 
 pub use advance::advance_instance;
+pub use cancel::cancel_instance;
 pub use detail::instance_detail;
 pub use editor::process_editor;
 pub use export::export_process;
@@ -54,6 +56,8 @@ impl ProcessUploadError {
 pub enum ProcessStartError {
     #[error("Process definition not found, or failed to start.")]
     NotFound,
+    #[error("Instance is not running.")]
+    NotRunning,
     #[error("Something went wrong. Please retry later.")]
     UnexpectedError(#[source] anyhow::Error),
 }
@@ -64,6 +68,7 @@ impl ProcessStartError {
     pub fn into_response(&self) -> Response {
         match self {
             ProcessStartError::NotFound => Response::not_found(),
+            ProcessStartError::NotRunning => Response::conflict(),
             ProcessStartError::UnexpectedError(_) => Response::internal_server_error(),
         }
         .set_typed_body(format!("{self}"))
@@ -260,7 +265,9 @@ pub(crate) fn pick_active_marker(
                 .map(|n| {
                     matches!(
                         n.node_type,
-                        NodeType::UserTask | NodeType::ParallelJoin { .. }
+                        NodeType::UserTask
+                            | NodeType::ParallelJoin { .. }
+                            | NodeType::ExternalTask { .. }
                     )
                 })
                 .unwrap_or(false)

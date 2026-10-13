@@ -13,6 +13,7 @@ pub async fn start_process(
     params: &PathParams<ProcessIdParams>,
     process_store: &Arc<crate::pg_process_store::PgProcessInstanceStore>,
     token_store: &Arc<crate::pg_process_store::PgTokenStore>,
+    ext_store: &Arc<crate::pg_external_task_store::PgExternalTaskStore>,
     def_store: &Arc<crate::engine_def_store::PgProcessDefinitionStore>,
     engine: &Arc<BpmEngine>,
 ) -> Result<Response, ProcessStartError> {
@@ -23,6 +24,7 @@ pub async fn start_process(
         process_store: Some(process_store.clone()),
         token_store: Some(token_store.clone()),
         process_def_store: Some(def_store.clone()),
+        external_task_store: Some(ext_store.clone()),
         ..Default::default()
     };
 

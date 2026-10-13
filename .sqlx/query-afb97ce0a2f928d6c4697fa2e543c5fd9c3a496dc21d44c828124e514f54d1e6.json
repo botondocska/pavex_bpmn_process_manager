@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, process_def_id, tenant_id, variables, state, version\n            FROM process_instances\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "process_def_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "tenant_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "variables",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "state",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "version",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "afb97ce0a2f928d6c4697fa2e543c5fd9c3a496dc21d44c828124e514f54d1e6"
+}
