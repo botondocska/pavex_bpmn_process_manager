@@ -1,0 +1,23 @@
+[package]
+name = "engine-core"
+version = "0.7.21"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+dashmap = "6"
+tokio = { version = "1.52", features = ["full"] }
+thiserror = "2.0"
+serde = "1.0"
+serde_json = "1.0"
+uuid = { version = "1.23", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+async-trait = "0.1"
+rhai = { version = "1.25.1", features = ["serde", "sync"] }
+croner = "4"
+metrics = "0.24"
+workspace_hack = { version = "0.1", path = "../workspace_hack" }
+[dev-dependencies]
+criterion = { version = "0.8", features = ["async_tokio"] }
+tokio = { version = "1.52", features = ["full","rt-multi-thread", "macros"] }

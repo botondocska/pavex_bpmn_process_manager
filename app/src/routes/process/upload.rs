@@ -2,11 +2,14 @@ use super::ProcessUploadError;
 use crate::routes::nav::NAV_ITEMS;
 use crate::session::auth::CheckedInUser;
 use crate::session::theme::Theme;
+use crate::workflow::ensure_deployed;
 use askama::Template;
+use engine_core::WorkflowEngine;
 use pavex::request::body::UrlEncodedBody;
 use pavex::response::body::Html;
 use pavex::{Response, get, post};
 use sqlx::PgPool;
+use std::sync::Arc;
 
 #[derive(Template)]
 #[template(path = "process_upload.html")]
@@ -43,14 +46,19 @@ pub async fn process_upload(
     user: &CheckedInUser,
     body: &UrlEncodedBody<ProcessUploadForm>,
     db_pool: &PgPool,
+    engine: &Arc<WorkflowEngine>,
 ) -> Result<Response, ProcessUploadError> {
     let ProcessUploadForm { name, bpmn_xml } = &body.0;
 
-    let def = bpm_engine_bpmn::parse_and_compile(bpmn_xml)
+    bpmn_parser::parse_bpmn_xml(bpmn_xml)
         .map_err(|e| ProcessUploadError::InvalidBpmn(e.to_string()))?;
-    crate::timer::validate_definition(&def).map_err(ProcessUploadError::InvalidBpmn)?;
 
     let process_id = insert_process(user.0, name, bpmn_xml, db_pool).await?;
+
+    // Deploy now so call activities in other processes can resolve it.
+    ensure_deployed(engine, db_pool, process_id)
+        .await
+        .map_err(ProcessUploadError::UnexpectedError)?;
 
     Ok(Response::ok()
         .insert_header(

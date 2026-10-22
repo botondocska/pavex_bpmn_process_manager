@@ -1,0 +1,397 @@
+//! Background retry queue for failed persistence operations.
+//!
+//! When a persist operation fails after inline retries, the job is pushed
+//! to a **bounded** channel. A background tokio task drains this channel,
+//! re-reads the current in-memory state, and retries the persistence call
+//! with exponential backoff.
+//!
+//! If the queue is full, new jobs are dropped and counted via
+//! `bpmn_persistence_retry_dropped_total` (prevents OOM under NATS outage).
+
+use super::super::runtime::*;
+use dashmap::DashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+use crate::history::HistoryEntry;
+use crate::persistence::WorkflowPersistence;
+
+/// Maximum number of retry attempts per job before giving up.
+const MAX_RETRIES: u32 = 50;
+
+/// Initial backoff delay (doubles each attempt, capped at MAX_BACKOFF).
+const INITIAL_BACKOFF_MS: u64 = 1_000;
+
+/// Maximum backoff delay.
+const MAX_BACKOFF_MS: u64 = 60_000;
+
+/// Number of inline retry attempts (before queuing to background).
+pub(crate) const INLINE_RETRIES: u32 = 2;
+
+/// Delay between inline retries in milliseconds (doubles each attempt).
+pub(crate) const INLINE_BACKOFF_MS: u64 = 50;
+
+/// Default capacity of the background retry queue.
+pub(crate) const DEFAULT_RETRY_QUEUE_CAPACITY: usize = 10_000;
+
+/// Resolves retry queue capacity from `PERSISTENCE_RETRY_QUEUE_CAPACITY` or default.
+pub(crate) fn retry_queue_capacity_from_env() -> usize {
+    std::env::var("PERSISTENCE_RETRY_QUEUE_CAPACITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_RETRY_QUEUE_CAPACITY)
+}
+
+/// A persistence operation that can be retried.
+#[derive(Debug, Clone)]
+pub(crate) enum PersistJob {
+    /// Re-read instance from InstanceStore and save to NATS.
+    SaveInstance(Uuid),
+    /// Re-read definition from DefinitionRegistry and save to NATS.
+    SaveDefinition(Uuid),
+    /// Re-read user task from pending_user_tasks and save to NATS.
+    SaveUserTask(Uuid),
+    /// Delete a user task from NATS.
+    DeleteUserTask(Uuid),
+    /// Re-read service task from pending_service_tasks and save to NATS.
+    SaveServiceTask(Uuid),
+    /// Delete a service task from NATS.
+    DeleteServiceTask(Uuid),
+    /// Re-read timer from pending_timers and save to NATS.
+    SaveTimer(Uuid),
+    /// Delete a timer from NATS.
+    DeleteTimer(Uuid),
+    /// Re-read message catch from pending_message_catches and save to NATS.
+    SaveMessageCatch(Uuid),
+    /// Delete a message catch from NATS.
+    DeleteMessageCatch(Uuid),
+    /// Append a history entry to NATS.
+    AppendHistoryEntry(Box<HistoryEntry>),
+    /// Instructs the worker to flush remaining jobs and exit.
+    Shutdown,
+}
+
+impl std::fmt::Display for PersistJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SaveInstance(id) => write!(f, "SaveInstance({})", id),
+            Self::SaveDefinition(id) => write!(f, "SaveDefinition({})", id),
+            Self::SaveUserTask(id) => write!(f, "SaveUserTask({})", id),
+            Self::DeleteUserTask(id) => write!(f, "DeleteUserTask({})", id),
+            Self::SaveServiceTask(id) => write!(f, "SaveServiceTask({})", id),
+            Self::DeleteServiceTask(id) => write!(f, "DeleteServiceTask({})", id),
+            Self::SaveTimer(id) => write!(f, "SaveTimer({})", id),
+            Self::DeleteTimer(id) => write!(f, "DeleteTimer({})", id),
+            Self::SaveMessageCatch(id) => write!(f, "SaveMessageCatch({})", id),
+            Self::DeleteMessageCatch(id) => write!(f, "DeleteMessageCatch({})", id),
+            Self::AppendHistoryEntry(e) => write!(f, "AppendHistoryEntry({})", e.instance_id),
+            Self::Shutdown => write!(f, "Shutdown"),
+        }
+    }
+}
+
+/// Sender half of the retry queue. Cheap to clone.
+pub(crate) type RetryQueueTx = mpsc::Sender<PersistJob>;
+
+/// Receiver half of the retry queue (consumed by the background task).
+pub(crate) type RetryQueueRx = mpsc::Receiver<PersistJob>;
+
+/// Creates a new bounded retry queue with default/env capacity.
+pub(crate) fn create_retry_queue() -> (RetryQueueTx, RetryQueueRx) {
+    create_retry_queue_with_capacity(retry_queue_capacity_from_env())
+}
+
+/// Creates a bounded retry queue with an explicit capacity (tests / custom sizing).
+pub(crate) fn create_retry_queue_with_capacity(capacity: usize) -> (RetryQueueTx, RetryQueueRx) {
+    mpsc::channel(capacity.max(1))
+}
+
+/// Spawns the background retry worker.
+///
+/// This task receives failed `PersistJob`s from the channel and retries them
+/// with exponential backoff. It re-reads the current in-memory state from the
+/// provided data sources (instance_store, definition_registry, pending maps)
+/// so it always persists the *latest* state, not a stale snapshot.
+///
+/// The `persistence`, `instances`, and `definitions` parameters are shared
+/// references from the WorkflowEngine.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_retry_worker(
+    mut rx: RetryQueueRx,
+    persistence: Arc<dyn WorkflowPersistence>,
+    instances: crate::engine::instance_store::InstanceStore,
+    definitions: crate::engine::registry::DefinitionRegistry,
+    pending_user_tasks: Arc<DashMap<Uuid, PendingUserTask>>,
+    pending_service_tasks: Arc<DashMap<Uuid, PendingServiceTask>>,
+    pending_timers: Arc<DashMap<Uuid, PendingTimer>>,
+    pending_message_catches: Arc<DashMap<Uuid, PendingMessageCatch>>,
+    error_counter: Arc<std::sync::atomic::AtomicU64>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        tracing::info!("Persistence retry worker started");
+
+        while let Some(job) = rx.recv().await {
+            if matches!(job, PersistJob::Shutdown) {
+                tracing::info!("Retry worker received shutdown signal, exiting.");
+                break;
+            }
+
+            let mut attempt = 0u32;
+            let mut backoff_ms = INITIAL_BACKOFF_MS;
+
+            loop {
+                attempt += 1;
+                let result = execute_job(
+                    &job,
+                    &persistence,
+                    &instances,
+                    &definitions,
+                    &pending_user_tasks,
+                    &pending_service_tasks,
+                    &pending_timers,
+                    &pending_message_catches,
+                )
+                .await;
+
+                match result {
+                    Ok(()) => {
+                        tracing::info!("Retry succeeded for {} (attempt {})", job, attempt);
+                        break;
+                    }
+                    Err(e) if attempt >= MAX_RETRIES => {
+                        error_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        metrics::counter!("bpmn_persistence_retry_exhausted_total").increment(1);
+                        tracing::error!(
+                            "PERMANENT PERSISTENCE FAILURE after {} retries for {}: {}",
+                            MAX_RETRIES,
+                            job,
+                            e
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Retry {}/{} for {} failed: {} — backing off {}ms",
+                            attempt,
+                            MAX_RETRIES,
+                            job,
+                            e,
+                            backoff_ms
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                    }
+                }
+            }
+        }
+
+        tracing::warn!("Persistence retry worker stopped (channel closed)");
+    })
+}
+
+/// Executes a single persist job against the persistence backend.
+///
+/// For "Save" jobs, re-reads the current state from in-memory stores.
+/// If the entity no longer exists in memory (e.g. instance was deleted),
+/// the job is silently skipped (returns Ok).
+#[allow(clippy::too_many_arguments)]
+async fn execute_job(
+    job: &PersistJob,
+    persistence: &Arc<dyn WorkflowPersistence>,
+    instances: &crate::engine::instance_store::InstanceStore,
+    definitions: &crate::engine::registry::DefinitionRegistry,
+    pending_user_tasks: &Arc<DashMap<Uuid, PendingUserTask>>,
+    pending_service_tasks: &Arc<DashMap<Uuid, PendingServiceTask>>,
+    pending_timers: &Arc<DashMap<Uuid, PendingTimer>>,
+    pending_message_catches: &Arc<DashMap<Uuid, PendingMessageCatch>>,
+) -> Result<(), String> {
+    match job {
+        PersistJob::SaveInstance(id) => {
+            if let Some(inst_arc) = instances.get(id).await {
+                let inst = inst_arc.read().await;
+                persistence
+                    .save_instance(&inst)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                // Instance was deleted since the job was queued — skip.
+                Ok(())
+            }
+        }
+        PersistJob::SaveDefinition(id) => {
+            if let Some(def) = definitions.get(id) {
+                persistence
+                    .save_definition(&def)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(())
+            }
+        }
+        PersistJob::SaveUserTask(id) => {
+            if let Some(task_ref) = pending_user_tasks.get(id) {
+                persistence
+                    .save_user_task(&task_ref)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(())
+            }
+        }
+        PersistJob::DeleteUserTask(id) => persistence
+            .delete_user_task(*id)
+            .await
+            .map_err(|e| e.to_string()),
+        PersistJob::SaveServiceTask(id) => {
+            if let Some(task_ref) = pending_service_tasks.get(id) {
+                persistence
+                    .save_service_task(&task_ref)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(())
+            }
+        }
+        PersistJob::DeleteServiceTask(id) => persistence
+            .delete_service_task(*id)
+            .await
+            .map_err(|e| e.to_string()),
+        PersistJob::SaveTimer(id) => {
+            if let Some(timer_ref) = pending_timers.get(id) {
+                persistence
+                    .save_timer(&timer_ref)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(())
+            }
+        }
+        PersistJob::DeleteTimer(id) => persistence
+            .delete_timer(*id)
+            .await
+            .map_err(|e| e.to_string()),
+        PersistJob::SaveMessageCatch(id) => {
+            if let Some(catch_ref) = pending_message_catches.get(id) {
+                persistence
+                    .save_message_catch(&catch_ref)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(())
+            }
+        }
+        PersistJob::DeleteMessageCatch(id) => persistence
+            .delete_message_catch(*id)
+            .await
+            .map_err(|e| e.to_string()),
+        PersistJob::AppendHistoryEntry(entry) => persistence
+            .append_history_entry(entry)
+            .await
+            .map_err(|e| e.to_string()),
+        PersistJob::Shutdown => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_persist_job_display() {
+        let id = Uuid::nil();
+        assert_eq!(
+            PersistJob::SaveInstance(id).to_string(),
+            "SaveInstance(00000000-0000-0000-0000-000000000000)"
+        );
+        assert_eq!(
+            PersistJob::DeleteServiceTask(id).to_string(),
+            "DeleteServiceTask(00000000-0000-0000-0000-000000000000)"
+        );
+        assert_eq!(PersistJob::Shutdown.to_string(), "Shutdown");
+    }
+
+    #[tokio::test]
+    async fn test_retry_worker_shutdown() {
+        let (tx, rx) = create_retry_queue();
+        let persistence = Arc::new(crate::adapter::in_memory::InMemoryPersistence::new());
+        let instances = crate::engine::instance_store::InstanceStore::new();
+        let definitions = crate::engine::registry::DefinitionRegistry::new();
+        let pending_user_tasks = Arc::new(DashMap::new());
+        let pending_service_tasks = Arc::new(DashMap::new());
+        let pending_timers = Arc::new(DashMap::new());
+        let pending_message_catches = Arc::new(DashMap::new());
+        let error_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        let handle = spawn_retry_worker(
+            rx,
+            persistence,
+            instances,
+            definitions,
+            pending_user_tasks,
+            pending_service_tasks,
+            pending_timers,
+            pending_message_catches,
+            error_counter,
+        );
+
+        tx.send(PersistJob::Shutdown).await.unwrap();
+        // Worker should exit cleanly
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("worker did not shut down in time")
+            .expect("worker panicked");
+    }
+
+    #[tokio::test]
+    async fn test_retry_worker_skips_missing_instance() {
+        let (tx, rx) = create_retry_queue();
+        let persistence = Arc::new(crate::adapter::in_memory::InMemoryPersistence::new());
+        let instances = crate::engine::instance_store::InstanceStore::new();
+        let definitions = crate::engine::registry::DefinitionRegistry::new();
+        let pending_user_tasks = Arc::new(DashMap::new());
+        let pending_service_tasks = Arc::new(DashMap::new());
+        let pending_timers = Arc::new(DashMap::new());
+        let pending_message_catches = Arc::new(DashMap::new());
+        let error_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        let handle = spawn_retry_worker(
+            rx,
+            persistence,
+            instances,
+            definitions,
+            pending_user_tasks,
+            pending_service_tasks,
+            pending_timers,
+            pending_message_catches,
+            error_counter.clone(),
+        );
+
+        // Send a SaveInstance for a non-existent ID — should succeed silently
+        tx.send(PersistJob::SaveInstance(Uuid::new_v4()))
+            .await
+            .unwrap();
+        tx.send(PersistJob::Shutdown).await.unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("worker did not shut down in time")
+            .expect("worker panicked");
+
+        // No permanent failures should have been recorded
+        assert_eq!(error_counter.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_retry_queue_try_send_full_drops() {
+        let (tx, _rx) = create_retry_queue_with_capacity(1);
+        // Fill the single slot
+        tx.try_send(PersistJob::SaveInstance(Uuid::new_v4()))
+            .expect("first send should fit");
+        let err = tx
+            .try_send(PersistJob::SaveInstance(Uuid::new_v4()))
+            .expect_err("second send must hit Full");
+        assert!(matches!(err, mpsc::error::TrySendError::Full(_)));
+    }
+}

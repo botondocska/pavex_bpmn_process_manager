@@ -3,10 +3,13 @@ use crate::routes::nav::NAV_ITEMS;
 use crate::session::auth::CheckedInUser;
 use crate::session::theme::Theme;
 use askama::Template;
+use engine_core::{EngineError, WorkflowEngine};
 use pavex::request::path::PathParams;
 use pavex::response::body::Html;
 use pavex::{Response, get, post};
 use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Template)]
 #[template(path = "process_instances.html")]
@@ -19,7 +22,7 @@ struct ProcessInstancesPage {
 
 struct InstanceRow {
     id: String,
-    process_def_id: String,
+    process_name: String,
     state: String,
 }
 
@@ -27,25 +30,29 @@ struct InstanceRow {
 pub async fn list_instances(
     _user: &CheckedInUser,
     theme: Theme,
+    engine: &Arc<WorkflowEngine>,
     db_pool: &PgPool,
 ) -> Result<Response, ProcessStartError> {
-    // Direct query, not through ProcessInstanceStore -- store trait has no
-    // "list all" method (only list_running(tenant_id) per commented-out
-    // pg_process_store.rs). Reading straight from the table is fine for a
-    // listing page; no engine involved.
-    let rows = sqlx::query!(
-        r#"SELECT id, process_def_id, state FROM process_instances ORDER BY updated_at DESC"#
-    )
-    .fetch_all(db_pool)
-    .await
-    .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+    let names: HashMap<uuid::Uuid, String> =
+        sqlx::query_as::<_, (uuid::Uuid, String)>("SELECT id, name FROM processes")
+            .fetch_all(db_pool)
+            .await
+            .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?
+            .into_iter()
+            .collect();
 
-    let instances = rows
+    let mut all = engine.list_instances().await;
+    all.sort_by_key(|i| std::cmp::Reverse(i.started_at));
+
+    let instances = all
         .into_iter()
-        .map(|r| InstanceRow {
-            id: r.id,
-            process_def_id: r.process_def_id,
-            state: r.state,
+        .map(|i| InstanceRow {
+            id: i.id.to_string(),
+            process_name: names
+                .get(&i.definition_key)
+                .cloned()
+                .unwrap_or_else(|| i.definition_key.to_string()),
+            state: crate::pg_persistence::state_label(&i.state).to_string(),
         })
         .collect();
 
@@ -93,14 +100,7 @@ pub async fn list_processes(
         .map(|r| ProcessRow {
             id: r.id,
             name: r.name,
-            // created_at is TIMESTAMPTZ -> time::OffsetDateTime per sqlx's
-            // `time` feature (confirmed pattern from pg_process_store.rs).
-            // Fall back to a plain debug string if Rfc3339 formatting fails,
-            // rather than erroring out the whole list on one bad row.
-            created_at: r
-                .created_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_else(|_| format!("{:?}", r.created_at)),
+            created_at: r.created_at.to_rfc3339(),
         })
         .collect();
 
@@ -120,11 +120,19 @@ pub async fn list_processes(
 pub async fn delete_process(
     _user: &CheckedInUser,
     params: &PathParams<ProcessIdParams>,
+    engine: &Arc<WorkflowEngine>,
     db_pool: &PgPool,
 ) -> Result<Response, ProcessStartError> {
     let process_id = params.0.id;
 
-    let result = sqlx::query!(r#"DELETE FROM processes WHERE id = $1"#, process_id)
+    // Cascade: engine drops instances + persisted rows. Not-deployed is fine.
+    match engine.delete_definition(process_id, true).await {
+        Ok(()) | Err(EngineError::NoSuchDefinition(_)) => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    let result = sqlx::query("DELETE FROM processes WHERE id = $1")
+        .bind(process_id)
         .execute(db_pool)
         .await
         .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
@@ -143,21 +151,9 @@ pub async fn delete_process(
 pub async fn delete_instance(
     _user: &CheckedInUser,
     params: &PathParams<InstanceIdParams>,
-    db_pool: &PgPool,
+    engine: &Arc<WorkflowEngine>,
 ) -> Result<Response, ProcessStartError> {
-    let instance_id = &params.0.id;
-
-    let result = sqlx::query!(
-        r#"DELETE FROM process_instances WHERE id = $1"#,
-        instance_id
-    )
-    .execute(db_pool)
-    .await
-    .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
-
-    if result.rows_affected() == 0 {
-        return Err(ProcessStartError::NotFound);
-    }
+    engine.delete_instance(params.0.id).await?;
 
     Ok(Response::ok().insert_header(
         pavex::http::header::HeaderName::from_static("hx-redirect"),

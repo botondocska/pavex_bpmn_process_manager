@@ -20,14 +20,9 @@ pub struct ServerConfig {
     pub port: u16,
     /// The network interface that the server must be bound to.
     ///
-    /// E.g. `0.0.0.0` for listening to incoming requests from
-    /// all sources.
-    ///
     /// Set the `PX_SERVER__IP` environment variable to override its value.
     pub ip: std::net::IpAddr,
     /// The timeout for graceful shutdown of the server.
-    ///
-    /// E.g. `1 minute` for a 1 minute timeout.
     ///
     /// Set the `PX_SERVER__GRACEFUL_SHUTDOWN_TIMEOUT` environment variable to override its value.
     #[serde(deserialize_with = "deserialize_shutdown")]
@@ -111,74 +106,5 @@ impl DatabaseConfig {
         let backend = PostgresSessionStore::new(pool.clone());
         backend.migrate().await?;
         Ok(SessionStore::new(backend))
-    }
-}
-
-// TODO: InstanceState/TokenStatus/TokenMode
-// mapping, process_uuid generated column, etc.) before these compile.
-use crate::engine_def_store::PgProcessDefinitionStore;
-use crate::pg_process_store::{PgProcessInstanceStore, PgTokenStore};
-use bpm_engine_runtime::{
-    BpmEngine, ProcessCompletedHandler, ProcessStartHandler, TokenArrivedHandler,
-    UserTaskCompletedHandler,
-};
-use std::sync::Arc;
-
-#[pavex::methods]
-impl PgProcessInstanceStore {
-    #[pavex::singleton]
-    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
-        Arc::new(Self::new(pool.clone()))
-    }
-}
-
-#[pavex::methods]
-impl PgTokenStore {
-    #[pavex::singleton]
-    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
-        Arc::new(Self::new(pool.clone()))
-    }
-}
-
-#[pavex::methods]
-impl PgProcessDefinitionStore {
-    #[pavex::singleton]
-    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
-        Arc::new(Self::new(pool.clone()))
-    }
-}
-
-// TODO: ProcessCompletedHandler needed here. No source found for it under
-// bpm-engine-core 0.2.0 or bpm-engine-runtime 0.2.0 in three searches so
-// far (only ProcessStartHandler, TokenArrivedHandler, HistoryHandler
-// confirmed real). Likely module: bpm_engine_runtime::process_completed_handler
-// -- try that import; if it doesn't exist, ProcessCompleted events may just
-// need a handler you write yourself: match EngineEvent::ProcessCompleted,
-// load instance, set state = InstanceState::Completed, process_store.save().
-#[pavex::singleton]
-pub fn bpm_engine() -> Arc<BpmEngine> {
-    Arc::new(BpmEngine::new(vec![
-        Box::new(ProcessStartHandler),
-        Box::new(TokenArrivedHandler::new()),
-        Box::new(UserTaskCompletedHandler),
-        Box::new(ProcessCompletedHandler),
-    ]))
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-#[config(key = "timer", include_if_unused)]
-pub struct TimerConfig {
-    pub enabled: bool,
-    #[serde(with = "humantime_serde")]
-    pub poll_interval: std::time::Duration,
-}
-
-use crate::pg_external_task_store::PgExternalTaskStore;
-
-#[pavex::methods]
-impl PgExternalTaskStore {
-    #[pavex::singleton]
-    pub fn arc(pool: &sqlx::PgPool) -> Arc<Self> {
-        Arc::new(Self::new(pool.clone()))
     }
 }

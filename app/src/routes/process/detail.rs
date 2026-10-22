@@ -1,12 +1,12 @@
 use super::{
-    GatewayChoice, InstanceIdParams, ProcessStartError, gateway_choices_after, json_for_script,
-    pick_active_marker,
+    ActiveMarker, GatewayChoice, InstanceIdParams, ProcessStartError, gateway_choices_after,
+    json_for_script,
 };
 use crate::routes::nav::NAV_ITEMS;
 use crate::session::auth::CheckedInUser;
 use crate::session::theme::Theme;
 use askama::Template;
-use bpm_engine_storage::{ProcessDefinitionStore, process_store::ProcessInstanceStore};
+use engine_core::{InstanceState, WorkflowEngine};
 use pavex::request::path::PathParams;
 use pavex::response::body::Html;
 use pavex::{Response, get};
@@ -20,19 +20,24 @@ struct ProcessInstanceDetailPage {
     nav_items: &'static [crate::routes::nav::NavItem],
     theme: Theme,
     instance_id: String,
+    process_name: String,
     state: String,
-    tokens: Vec<TokenRow>,
+    rows: Vec<PendingRow>,
     bpmn_xml_json: String,
-    marker_json: String,
+    markers_json: String,
 }
 
-struct TokenRow {
-    id: String,
-    node_id: String,
-    status: String,
+struct PendingRow {
+    kind: &'static str,
+    node: String,
+    detail: String,
+    task_id: String,
     is_user_task: bool,
     gateway_choices: Vec<GatewayChoice>,
-    wait_label: Option<String>,
+}
+
+fn unexpected(e: impl Into<anyhow::Error>) -> ProcessStartError {
+    ProcessStartError::UnexpectedError(e.into())
 }
 
 #[get(path = "/processes/instances/{id}")]
@@ -40,110 +45,131 @@ pub async fn instance_detail(
     _user: &CheckedInUser,
     params: &PathParams<InstanceIdParams>,
     theme: Theme,
-    process_store: &Arc<crate::pg_process_store::PgProcessInstanceStore>,
-    def_store: &Arc<crate::engine_def_store::PgProcessDefinitionStore>,
-    ext_store: &Arc<crate::pg_external_task_store::PgExternalTaskStore>,
+    engine: &Arc<WorkflowEngine>,
     db_pool: &PgPool,
 ) -> Result<Response, ProcessStartError> {
-    let instance = process_store
-        .load(&params.0.id)
+    let instance = engine.get_instance_details(params.0.id).await?;
+    let def = engine
+        .get_definition(&instance.definition_key)
         .await
-        .map_err(ProcessStartError::UnexpectedError)?
         .ok_or(ProcessStartError::NotFound)?;
 
-    let def = def_store
-        .load(&instance.process_def_id)
-        .await
-        .map_err(ProcessStartError::UnexpectedError)?
-        .ok_or(ProcessStartError::NotFound)?;
+    let (process_name, bpmn_xml): (String, String) =
+        sqlx::query_as("SELECT name, bpmn_xml FROM processes WHERE id = $1")
+            .bind(instance.definition_key)
+            .fetch_optional(db_pool)
+            .await
+            .map_err(unexpected)?
+            .ok_or(ProcessStartError::NotFound)?;
 
-    // process_def_id is a stringified UUID (see engine_def_store.rs); the
-    // `processes` table is where the raw BPMN XML actually lives -- `def`
-    // here is only the compiled/executable form and doesn't carry the
-    // source XML text needed to render it.
-    let process_uuid = uuid::Uuid::parse_str(&instance.process_def_id)
-        .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
-    let bpmn_xml = sqlx::query_scalar!(
-        r#"SELECT bpmn_xml FROM processes WHERE id = $1"#,
-        process_uuid,
-    )
-    .fetch_one(db_pool)
-    .await
-    .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+    let mut rows = Vec::new();
+    let mut markers = Vec::new();
 
-    let marker = pick_active_marker(&def, &instance);
-
-    let wait_labels: std::collections::HashMap<String, String> = ext_store
-        .pending_for_instance(&instance.id)
-        .await
-        .map_err(ProcessStartError::UnexpectedError)?
+    for t in engine
+        .get_pending_user_tasks()
         .into_iter()
-        .map(|(token_id, task_type, due)| {
-            let label = if task_type.starts_with(crate::timer::TIMER_PREFIX) {
-                let when = due
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_else(|_| due.to_string());
-                format!("Timer {task_type}, due {when}")
-            } else {
-                format!("Waiting on worker: {task_type}")
-            };
-            (token_id, label)
-        })
-        .collect();
-
-    let mut tokens = Vec::with_capacity(instance.tokens.len());
-    for t in &instance.tokens {
-        let is_user_task = def
-            .nodes
-            .get(t.node_id.as_str())
-            .map(|n| matches!(n.node_type, bpm_engine_core::node::NodeType::UserTask))
-            .unwrap_or(false);
-
-        // Only advanceable (Waiting UserTask) tokens need gateway-choice
-        // discovery; other tokens (fork/join/service/etc.) never render an
-        // advance form, so skip the walk for them.
-        let gateway_choices =
-            if is_user_task && matches!(t.status, bpm_engine_core::TokenStatus::Waiting) {
-                gateway_choices_after(&def, &t.node_id)
-                    .map_err(|e| ProcessStartError::UnexpectedError(anyhow::anyhow!(e)))?
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
-        tokens.push(TokenRow {
-            id: t.id.clone(),
-            node_id: match t
-                .node_id
-                .strip_suffix(crate::engine_def_store::DECISION_SUFFIX)
-            {
-                Some(g) => format!("{g} (decision)"),
-                None => t.node_id.clone(),
-            },
-            status: format!("{:?}", t.status),
-            is_user_task,
+        .filter(|t| t.instance_id == instance.id)
+    {
+        let gateway_choices = gateway_choices_after(&def, &t.node_id)
+            .map_err(|e| unexpected(anyhow::anyhow!(e)))?
+            .unwrap_or_default();
+        markers.push(ActiveMarker {
+            node_id: t.node_id.clone(),
+            label: format!("Waiting: {}", t.assignee),
+        });
+        rows.push(PendingRow {
+            kind: "User task",
+            node: t.node_id,
+            detail: format!("assignee: {}", t.assignee),
+            task_id: t.task_id.to_string(),
+            is_user_task: true,
             gateway_choices,
-            wait_label: wait_labels.get(&t.id).cloned(),
         });
     }
 
-    let bpmn_xml_json =
-        json_for_script(&bpmn_xml).map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
-    let marker_json =
-        json_for_script(&marker).map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+    for t in engine
+        .get_pending_service_tasks()
+        .into_iter()
+        .filter(|t| t.instance_id == instance.id)
+    {
+        markers.push(ActiveMarker {
+            node_id: t.node_id.clone(),
+            label: format!("Service: {}", t.topic),
+        });
+        rows.push(PendingRow {
+            kind: "Service task",
+            node: t.node_id,
+            detail: format!("topic: {}, retries: {}", t.topic, t.retries),
+            task_id: String::new(),
+            is_user_task: false,
+            gateway_choices: Vec::new(),
+        });
+    }
+
+    // nil token_id = scope event listener; node_id is not a diagram node.
+    for t in engine
+        .get_pending_timers()
+        .into_iter()
+        .filter(|t| t.instance_id == instance.id && !t.token_id.is_nil())
+    {
+        markers.push(ActiveMarker {
+            node_id: t.node_id.clone(),
+            label: "Timer".to_string(),
+        });
+        rows.push(PendingRow {
+            kind: "Timer",
+            node: t.node_id,
+            detail: format!("fires at {}", t.expires_at.to_rfc3339()),
+            task_id: String::new(),
+            is_user_task: false,
+            gateway_choices: Vec::new(),
+        });
+    }
+
+    for m in engine
+        .get_pending_message_catches()
+        .into_iter()
+        .filter(|m| m.instance_id == instance.id && !m.token_id.is_nil())
+    {
+        markers.push(ActiveMarker {
+            node_id: m.node_id.clone(),
+            label: "Message".to_string(),
+        });
+        rows.push(PendingRow {
+            kind: "Message",
+            node: m.node_id,
+            detail: format!("waiting for `{}`", m.message_name),
+            task_id: String::new(),
+            is_user_task: false,
+            gateway_choices: Vec::new(),
+        });
+    }
+
+    match &instance.state {
+        InstanceState::Completed => markers.push(ActiveMarker {
+            node_id: instance.current_node.clone(),
+            label: "Completed".to_string(),
+        }),
+        InstanceState::CompletedWithError { error_code } => markers.push(ActiveMarker {
+            node_id: instance.current_node.clone(),
+            label: format!("Error: {error_code}"),
+        }),
+        _ => {}
+    }
 
     let body = ProcessInstanceDetailPage {
         active_page: "processes",
         nav_items: NAV_ITEMS,
         theme,
-        instance_id: instance.id,
-        state: format!("{:?}", instance.state),
-        tokens,
-        bpmn_xml_json,
-        marker_json,
+        instance_id: instance.id.to_string(),
+        process_name,
+        state: crate::pg_persistence::state_label(&instance.state).to_string(),
+        rows,
+        bpmn_xml_json: json_for_script(&bpmn_xml).map_err(unexpected)?,
+        markers_json: json_for_script(&markers).map_err(unexpected)?,
     }
     .render()
-    .map_err(|e| ProcessStartError::UnexpectedError(e.into()))?;
+    .map_err(unexpected)?;
     let html: Html = body.into();
     Ok(Response::ok().set_typed_body(html))
 }

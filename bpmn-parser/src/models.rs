@@ -1,0 +1,503 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub(crate) struct BpmnMultiInstanceLoopCharacteristics {
+    #[serde(rename = "@isSequential", default)]
+    pub is_sequential: Option<bool>,
+    #[serde(rename = "loopCardinality", default)]
+    pub loop_cardinality: Option<BpmnLoopCardinality>,
+    #[serde(rename = "@collection", default)]
+    pub collection: Option<String>,
+    #[serde(rename = "@elementVariable", default)]
+    pub element_variable: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub(crate) struct BpmnLoopCardinality {
+    #[serde(rename = "$value", default)]
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnExtensionElements {
+    #[serde(rename = "executionListener", default)]
+    pub execution_listeners: Vec<BpmnExecutionListener>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnExecutionListener {
+    #[serde(rename = "@event")]
+    pub event: String,
+
+    #[serde(rename = "script")]
+    pub script: Option<BpmnScript>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnScript {
+    #[serde(rename = "@scriptFormat")]
+    #[allow(dead_code)]
+    pub script_format: String,
+
+    #[serde(rename = "$value")]
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnDefinitions {
+    #[allow(dead_code)]
+    #[serde(rename = "@id", default)]
+    pub id: Option<String>,
+
+    #[serde(rename = "process", default)]
+    pub processes: Vec<BpmnProcess>,
+
+    #[allow(dead_code)]
+    #[serde(rename = "collaboration", default)]
+    pub collaborations: Vec<IgnoredElement>,
+
+    #[allow(dead_code)]
+    #[serde(rename = "BPMNDiagram", default)]
+    pub bpmndiagrams: Vec<IgnoredElement>,
+
+    #[serde(rename = "message", default)]
+    pub messages: Vec<BpmnMessage>,
+
+    #[serde(rename = "error", default)]
+    pub errors: Vec<BpmnErrorDef>,
+
+    #[serde(rename = "escalation", default)]
+    pub escalations: Vec<BpmnEscalationDef>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnMessage {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "@name")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnErrorDef {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "@name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "@errorCode", default)]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnEscalationDef {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "@name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "@escalationCode", default)]
+    pub escalation_code: Option<String>,
+}
+
+/// A catch-all struct for elements we want to parse but otherwise ignore.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub(crate) struct IgnoredElement {
+    #[serde(rename = "@id", default)]
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnProcess {
+    #[serde(rename = "@id")]
+    pub id: String,
+
+    #[serde(rename = "@isExecutable", default)]
+    pub is_executable: Option<bool>,
+
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+
+    #[serde(rename = "startEvent", default)]
+    pub start_events: Vec<BpmnStartEvent>,
+
+    #[serde(rename = "endEvent", default)]
+    pub end_events: Vec<BpmnEndEvent>,
+
+    #[serde(rename = "serviceTask", default)]
+    pub service_tasks: Vec<BpmnServiceTask>,
+
+    #[serde(rename = "userTask", default)]
+    pub user_tasks: Vec<BpmnUserTask>,
+
+    #[serde(rename = "sequenceFlow", default)]
+    pub sequence_flows: Vec<BpmnSequenceFlow>,
+
+    // --- Ignored Visual/Data Elements ---
+    #[allow(dead_code)]
+    #[serde(rename = "dataObjectReference", default)]
+    pub data_object_references: Vec<IgnoredElement>,
+    #[allow(dead_code)]
+    #[serde(rename = "dataStoreReference", default)]
+    pub data_store_references: Vec<IgnoredElement>,
+    #[allow(dead_code)]
+    #[serde(rename = "textAnnotation", default)]
+    pub text_annotations: Vec<IgnoredElement>,
+    #[allow(dead_code)]
+    #[serde(rename = "association", default)]
+    pub associations: Vec<IgnoredElement>,
+
+    // --- Future/Unsupported Elements ---
+    #[serde(rename = "subProcess", default)]
+    pub sub_processes: Vec<BpmnSubProcess>,
+
+    #[serde(rename = "boundaryEvent", default)]
+    pub boundary_events: Vec<BpmnBoundaryEvent>,
+
+    /// Generic `<task>` elements (bpmn-js default when adding a task).
+    #[serde(rename = "task", default)]
+    pub generic_tasks: Vec<BpmnGenericTask>,
+
+    #[serde(rename = "scriptTask", default)]
+    pub script_tasks: Vec<BpmnScriptTask>,
+    #[serde(rename = "sendTask", default)]
+    pub send_tasks: Vec<BpmnSendTask>,
+    #[serde(rename = "receiveTask", default)]
+    pub receive_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "manualTask", default)]
+    pub manual_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "businessRuleTask", default)]
+    pub business_rule_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "callActivity", default)]
+    pub call_activities: Vec<BpmnCallActivity>,
+
+    /// Gateways — mapped to proper BpmnElement variants.
+    #[serde(rename = "exclusiveGateway", default)]
+    pub exclusive_gateways: Vec<BpmnExclusiveGateway>,
+    #[serde(rename = "parallelGateway", default)]
+    pub parallel_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "inclusiveGateway", default)]
+    pub inclusive_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "eventBasedGateway", default)]
+    pub event_based_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "complexGateway", default)]
+    pub complex_gateways: Vec<BpmnComplexGateway>,
+
+    /// Intermediate events — treated as pass-through nodes.
+    #[serde(rename = "intermediateThrowEvent", default)]
+    pub intermediate_throw_events: Vec<BpmnIntermediateThrowEvent>,
+    #[serde(rename = "intermediateCatchEvent", default)]
+    pub intermediate_catch_events: Vec<BpmnIntermediateCatchEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnStartEvent {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "timerEventDefinition")]
+    pub timer_event_definition: Option<BpmnTimerEventDefinition>,
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnTimerEventDefinition {
+    #[serde(rename = "timeDuration")]
+    pub time_duration: Option<String>,
+    #[serde(rename = "timeDate")]
+    pub time_date: Option<String>,
+    #[serde(rename = "timeCycle")]
+    pub time_cycle: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnMessageEventDefinition {
+    #[serde(rename = "@messageRef")]
+    pub message_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnErrorEventDefinition {
+    #[serde(rename = "@errorRef")]
+    pub error_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnEscalationEventDefinition {
+    #[serde(rename = "@escalationRef")]
+    pub escalation_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnCompensateEventDefinition {
+    #[serde(rename = "@activityRef", default)]
+    pub activity_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnEndEvent {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "errorEventDefinition")]
+    pub error_event_definition: Option<BpmnErrorEventDefinition>,
+    #[allow(dead_code)]
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+    #[serde(rename = "escalationEventDefinition")]
+    pub escalation_event_definition: Option<BpmnEscalationEventDefinition>,
+    #[serde(rename = "compensateEventDefinition")]
+    pub compensate_event_definition: Option<BpmnCompensateEventDefinition>,
+    #[serde(rename = "terminateEventDefinition")]
+    pub terminate_event_definition: Option<IgnoredElement>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnScriptTask {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "@scriptFormat", default)]
+    pub script_format: Option<String>,
+    #[serde(rename = "@data-script", default)]
+    pub data_script: Option<String>,
+    #[serde(rename = "script", default)]
+    pub script: Option<BpmnScriptContent>,
+    #[serde(rename = "multiInstanceLoopCharacteristics")]
+    pub multi_instance: Option<BpmnMultiInstanceLoopCharacteristics>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnScriptContent {
+    #[serde(rename = "$value", default)]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnSendTask {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+    #[serde(rename = "multiInstanceLoopCharacteristics")]
+    pub multi_instance: Option<BpmnMultiInstanceLoopCharacteristics>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnIntermediateThrowEvent {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+    #[serde(rename = "escalationEventDefinition")]
+    pub escalation_event_definition: Option<BpmnEscalationEventDefinition>,
+    #[serde(rename = "compensateEventDefinition")]
+    pub compensate_event_definition: Option<BpmnCompensateEventDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnServiceTask {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@data-handler")]
+    pub handler: Option<String>,
+    #[serde(rename = "@data-topic")]
+    pub topic: Option<String>,
+    #[serde(rename = "multiInstanceLoopCharacteristics")]
+    pub multi_instance: Option<BpmnMultiInstanceLoopCharacteristics>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnUserTask {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@data-assignee")]
+    pub assignee: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnConditionExpression {
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnSequenceFlow {
+    #[serde(rename = "@id")]
+    pub _id: String,
+    #[serde(rename = "@sourceRef")]
+    pub source_ref: String,
+    #[serde(rename = "@targetRef")]
+    pub target_ref: String,
+    #[serde(rename = "conditionExpression")]
+    pub condition_expression: Option<BpmnConditionExpression>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnGenericTask {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "multiInstanceLoopCharacteristics")]
+    pub multi_instance: Option<BpmnMultiInstanceLoopCharacteristics>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnCallActivity {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "@calledElement", default)]
+    pub called_element: Option<String>,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnExclusiveGateway {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@default", default)]
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnComplexGateway {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "@default", default)]
+    pub default: Option<String>,
+    #[serde(rename = "activationCondition")]
+    pub activation_condition: Option<BpmnConditionExpression>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnGateway {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnIntermediateCatchEvent {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+    #[serde(rename = "timerEventDefinition")]
+    pub timer_event_definition: Option<BpmnTimerEventDefinition>,
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnBoundaryEvent {
+    #[serde(rename = "@id")]
+    pub id: String,
+    #[serde(rename = "@attachedToRef")]
+    pub attached_to_ref: String,
+    #[serde(rename = "@cancelActivity", default)]
+    pub cancel_activity: Option<bool>,
+    #[serde(rename = "timerEventDefinition")]
+    pub timer_event_definition: Option<BpmnTimerEventDefinition>,
+    #[serde(rename = "errorEventDefinition")]
+    pub error_event_definition: Option<BpmnErrorEventDefinition>,
+    #[serde(rename = "messageEventDefinition")]
+    pub message_event_definition: Option<BpmnMessageEventDefinition>,
+    #[serde(rename = "escalationEventDefinition")]
+    pub escalation_event_definition: Option<BpmnEscalationEventDefinition>,
+    #[serde(rename = "compensateEventDefinition")]
+    pub compensate_event_definition: Option<BpmnCompensateEventDefinition>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnSubProcess {
+    #[serde(rename = "@id")]
+    pub id: String,
+
+    #[serde(rename = "@triggeredByEvent", default)]
+    pub triggered_by_event: Option<bool>,
+
+    #[serde(rename = "extensionElements")]
+    pub extension_elements: Option<BpmnExtensionElements>,
+
+    #[serde(rename = "startEvent", default)]
+    pub start_events: Vec<BpmnStartEvent>,
+
+    #[serde(rename = "endEvent", default)]
+    pub end_events: Vec<BpmnEndEvent>,
+
+    #[serde(rename = "serviceTask", default)]
+    pub service_tasks: Vec<BpmnServiceTask>,
+
+    #[serde(rename = "userTask", default)]
+    pub user_tasks: Vec<BpmnUserTask>,
+
+    #[serde(rename = "sequenceFlow", default)]
+    pub sequence_flows: Vec<BpmnSequenceFlow>,
+
+    #[serde(rename = "boundaryEvent", default)]
+    pub boundary_events: Vec<BpmnBoundaryEvent>,
+
+    #[serde(rename = "task", default)]
+    pub generic_tasks: Vec<BpmnGenericTask>,
+
+    #[serde(rename = "scriptTask", default)]
+    pub script_tasks: Vec<BpmnScriptTask>,
+    #[serde(rename = "sendTask", default)]
+    pub send_tasks: Vec<BpmnSendTask>,
+    #[serde(rename = "receiveTask", default)]
+    pub receive_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "manualTask", default)]
+    pub manual_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "businessRuleTask", default)]
+    pub business_rule_tasks: Vec<BpmnGenericTask>,
+    #[serde(rename = "callActivity", default)]
+    pub call_activities: Vec<BpmnCallActivity>,
+
+    #[serde(rename = "exclusiveGateway", default)]
+    pub exclusive_gateways: Vec<BpmnExclusiveGateway>,
+    #[serde(rename = "parallelGateway", default)]
+    pub parallel_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "inclusiveGateway", default)]
+    pub inclusive_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "eventBasedGateway", default)]
+    pub event_based_gateways: Vec<BpmnGateway>,
+    #[serde(rename = "complexGateway", default)]
+    pub complex_gateways: Vec<BpmnComplexGateway>,
+
+    #[serde(rename = "intermediateThrowEvent", default)]
+    pub intermediate_throw_events: Vec<BpmnIntermediateThrowEvent>,
+    #[serde(rename = "intermediateCatchEvent", default)]
+    pub intermediate_catch_events: Vec<BpmnIntermediateCatchEvent>,
+
+    // Note: We don't support infinitely nested subProcesses recursively right now
+    // to avoid infinite JSON tree size in some serde setups, but usually it works.
+    // Let's add it recursively:
+    #[serde(rename = "subProcess", default)]
+    pub sub_processes: Vec<BpmnSubProcess>,
+}

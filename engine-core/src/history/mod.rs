@@ -1,0 +1,838 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+use crate::runtime::ProcessInstance;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ActorType {
+    Engine,
+    User,
+    ServiceWorker,
+    Timer,
+    Listener,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HistoryEventType {
+    InstanceStarted,
+    InstanceCompleted,
+    InstanceDeleted,
+    TaskCompleted,    // User Task / Service Task completed
+    VariableUpdated,  // explicit update
+    GatewayTaken,     // XOR / OR fork
+    ListenerExecuted, // Scripts
+    TokenAdvanced,    // generic token move
+    TokenForked,      // Gateway split created N tokens
+    TokenJoined,      // Gateway join merged N tokens into one
+    BranchCompleted,  // One branch of a parallel execution reached EndEvent
+    Error,            // something failed
+    CallActivityStarted,
+    CallActivityCompleted,
+    InstanceSuspended,
+    InstanceResumed,
+    TokenMoved,
+    EscalationThrown,
+    CompensationTriggered,
+    InstanceMigrated,
+}
+
+impl HistoryEventType {
+    /// Returns a human-readable description of the event type.
+    pub fn human_description(&self) -> String {
+        match self {
+            Self::InstanceStarted => "Process instance started".into(),
+            Self::InstanceCompleted => "Process instance completed".into(),
+            Self::InstanceDeleted => "Process instance was deleted".into(),
+            Self::TaskCompleted => "Task was completed".into(),
+            Self::VariableUpdated => "Variable was updated".into(),
+            Self::GatewayTaken => "Gateway path was taken".into(),
+            Self::ListenerExecuted => "Execution listener finished".into(),
+            Self::TokenAdvanced => "Token advanced to the next node".into(),
+            Self::TokenForked => "Token forked into multiple branches".into(),
+            Self::TokenJoined => "Multiple tokens joined into one".into(),
+            Self::BranchCompleted => "Branch execution completed".into(),
+            Self::Error => "An execution error occurred".into(),
+            Self::CallActivityStarted => "Call activity started".into(),
+            Self::CallActivityCompleted => "Call activity completed".into(),
+            Self::InstanceSuspended => "Process instance was suspended".into(),
+            Self::InstanceResumed => "Process instance was resumed".into(),
+            Self::TokenMoved => "Token was manually moved to a different node".into(),
+            Self::EscalationThrown => "An escalation was thrown".into(),
+            Self::CompensationTriggered => "Compensation was triggered".into(),
+            Self::InstanceMigrated => "Process instance was migrated to a new definition".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VariableDiff {
+    pub added: HashMap<String, serde_json::Value>,
+    pub removed: Vec<String>,
+    pub changed: HashMap<String, (serde_json::Value, serde_json::Value)>, // (old, new)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryDiff {
+    pub variables: Option<VariableDiff>,
+    pub status: Option<(String, String)>, // "RUNNING" -> "COMPLETED"
+    pub current_node: Option<(String, String)>, // "start" -> "task1"
+    pub human_readable: Option<String>,   // Auto-generated human-readable text
+}
+
+/// Returns true if the diff has actually recorded any changes.
+impl HistoryDiff {
+    pub fn is_empty(&self) -> bool {
+        self.variables.is_none()
+            && self.status.is_none()
+            && self.current_node.is_none()
+            && self.human_readable.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub id: Uuid,
+    pub instance_id: Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub event_type: HistoryEventType,
+    pub node_id: Option<String>, // BPMN element ID
+    pub description: String,
+    pub actor_type: ActorType,
+    pub actor_id: Option<String>,
+    pub diff: Option<HistoryDiff>,
+    #[serde(default)]
+    pub context: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub definition_version: Option<i32>,
+    #[serde(default)]
+    pub is_snapshot: bool,
+    #[serde(default)]
+    pub full_state_snapshot: Option<serde_json::Value>,
+}
+
+impl HistoryEntry {
+    pub fn new(
+        instance_id: Uuid,
+        event_type: HistoryEventType,
+        description: impl Into<String>,
+        actor_type: ActorType,
+        actor_id: Option<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            instance_id,
+            timestamp: Utc::now(),
+            event_type,
+            node_id: None,
+            description: description.into(),
+            actor_type,
+            actor_id,
+            diff: None,
+            context: HashMap::new(),
+            metadata: None,
+            definition_version: None,
+            is_snapshot: false,
+            full_state_snapshot: None,
+        }
+    }
+
+    pub fn with_node(mut self, node_id: impl Into<String>) -> Self {
+        self.node_id = Some(node_id.into());
+        self
+    }
+
+    pub fn with_diff(mut self, diff: HistoryDiff) -> Self {
+        if !diff.is_empty() {
+            if let Some(human_text) = &diff.human_readable {
+                self.description = human_text.clone();
+            }
+            self.diff = Some(diff);
+        }
+        self
+    }
+
+    pub fn with_metadata(mut self, meta: serde_json::Value) -> Self {
+        self.metadata = Some(meta);
+        self
+    }
+
+    pub fn with_context(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.context.insert(key.into(), value);
+        self
+    }
+
+    pub fn with_snapshot(mut self, snapshot: serde_json::Value) -> Self {
+        self.is_snapshot = true;
+        self.full_state_snapshot = Some(snapshot);
+        self
+    }
+}
+
+fn format_file_human_text(_key: &str, value: &serde_json::Value) -> Option<String> {
+    if value.get("type").and_then(|t| t.as_str()) == Some("file") {
+        let filename = value
+            .get("filename")
+            .and_then(|f| f.as_str())
+            .unwrap_or("unknown");
+        let size = value
+            .get("size_bytes")
+            .and_then(|s| s.as_u64())
+            .unwrap_or(0);
+        let size_human = if size > 1_048_576 {
+            format!("{:.1} MB", size as f64 / 1_048_576.0)
+        } else {
+            format!("{:.1} KB", size as f64 / 1024.0)
+        };
+        Some(format!("File '{}' uploaded ({}).", filename, size_human))
+    } else {
+        None
+    }
+}
+
+fn truncate_value_for_diff(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) if s.len() > 1024 => {
+            // Find the largest char boundary <= 1024 to avoid panicking on multi-byte UTF-8 chars
+            let mut boundary = 1024;
+            while boundary > 0 && !s.is_char_boundary(boundary) {
+                boundary -= 1;
+            }
+            serde_json::Value::String(format!(
+                "{}... <truncated {} chars>",
+                &s[..boundary],
+                s.chars().count() - s[..boundary].chars().count()
+            ))
+        }
+        serde_json::Value::Array(a) if a.len() > 128 => {
+            serde_json::Value::String(format!("<Large Array: {} elements>", a.len()))
+        }
+        _ => v.clone(),
+    }
+}
+
+/// Lightweight snapshot for diff calculation.
+/// Avoids cloning audit_log, tokens, active_tokens, join_barriers.
+#[derive(Debug, Clone)]
+pub struct DiffSnapshot {
+    pub state: crate::runtime::InstanceState,
+    pub current_node: String,
+    pub variables: HashMap<String, serde_json::Value>,
+}
+
+impl DiffSnapshot {
+    /// Extracts only the diff-relevant fields from a ProcessInstance.
+    /// Cost: 1 enum clone + 1 string clone + N variable clones.
+    /// Does NOT clone audit_log, tokens, active_tokens, join_barriers.
+    pub fn from_instance(inst: &ProcessInstance) -> Self {
+        Self {
+            state: inst.state.clone(),
+            current_node: inst.current_node.clone(),
+            variables: inst.variables.clone(),
+        }
+    }
+}
+
+/// Calculates the difference between two process instance states.
+pub fn calculate_diff(old: &ProcessInstance, new: &ProcessInstance) -> HistoryDiff {
+    calculate_diff_from_snapshot(&DiffSnapshot::from_instance(old), new)
+}
+
+/// Calculates the difference between a lightweight snapshot and a new state.
+pub fn calculate_diff_from_snapshot(old: &DiffSnapshot, new: &ProcessInstance) -> HistoryDiff {
+    let mut diff = HistoryDiff {
+        variables: None,
+        status: None,
+        current_node: None,
+        human_readable: None,
+    };
+
+    let mut human_texts = Vec::new();
+
+    // Calculate status diff
+    let old_status = format!("{:?}", old.state);
+    let new_status = format!("{:?}", new.state);
+    if old_status != new_status {
+        diff.status = Some((old_status, new_status));
+        human_texts.push(format!("Status changed to {:?}.", new.state));
+    }
+
+    // Calculate current_node diff
+    if old.current_node != new.current_node {
+        diff.current_node = Some((old.current_node.clone(), new.current_node.clone()));
+        human_texts.push(format!(
+            "Advanced from node '{}' to '{}'.",
+            old.current_node, new.current_node
+        ));
+    }
+
+    // Calculate variable diff
+    let mut var_diff = VariableDiff {
+        added: HashMap::new(),
+        removed: Vec::new(),
+        changed: HashMap::new(),
+    };
+
+    // Check for removed and changed
+    for (k, v_old) in &old.variables {
+        if let Some(v_new) = new.variables.get(k) {
+            if v_old != v_new {
+                var_diff.changed.insert(
+                    k.clone(),
+                    (
+                        truncate_value_for_diff(v_old),
+                        truncate_value_for_diff(v_new),
+                    ),
+                );
+                if let Some(file_text) = format_file_human_text(k, v_new) {
+                    human_texts.push(file_text);
+                } else {
+                    let text = format!(
+                        "Variable '{}' changed from {} to {}.",
+                        k,
+                        truncate_value_for_diff(v_old),
+                        truncate_value_for_diff(v_new)
+                    );
+                    human_texts.push(text.chars().take(500).collect::<String>());
+                }
+            }
+        } else {
+            var_diff.removed.push(k.clone());
+            human_texts.push(format!("Variable '{}' was removed.", k));
+        }
+    }
+
+    // Check for added
+    for (k, v_new) in &new.variables {
+        if !old.variables.contains_key(k) {
+            var_diff
+                .added
+                .insert(k.clone(), truncate_value_for_diff(v_new));
+            if let Some(file_text) = format_file_human_text(k, v_new) {
+                human_texts.push(file_text);
+            } else {
+                let text = format!(
+                    "Variable '{}' was added ({}).",
+                    k,
+                    truncate_value_for_diff(v_new)
+                );
+                human_texts.push(text.chars().take(500).collect::<String>());
+            }
+        }
+    }
+
+    if !var_diff.added.is_empty() || !var_diff.removed.is_empty() || !var_diff.changed.is_empty() {
+        diff.variables = Some(var_diff);
+    }
+
+    if !human_texts.is_empty() {
+        diff.human_readable = Some(human_texts.join(" "));
+    }
+
+    diff
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::InstanceState;
+    use serde_json::json;
+
+    #[test]
+    fn test_calculate_diff() {
+        let mut old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK-1".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "start".into(),
+            audit_log: vec![],
+            variables: HashMap::new(),
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+        old.variables.insert("a".into(), json!(1));
+        old.variables.insert("b".into(), json!(2));
+
+        let mut new = old.clone();
+        new.current_node = "task1".into();
+        new.state = InstanceState::WaitingOnUserTask {
+            task_id: Uuid::new_v4(),
+        };
+        new.variables.insert("a".into(), json!(100)); // changed
+        new.variables.remove("b"); // removed
+        new.variables.insert("c".into(), json!(3)); // added
+
+        let diff = calculate_diff(&old, &new);
+
+        assert!(diff.human_readable.is_some());
+        assert!(diff.status.is_some());
+        assert!(diff.status.unwrap().0.contains("Running"));
+        assert!(diff.current_node.is_some());
+        assert_eq!(
+            diff.current_node.unwrap(),
+            ("start".to_string(), "task1".to_string())
+        );
+
+        let var_diff = diff.variables.unwrap();
+        assert_eq!(var_diff.changed.get("a").unwrap(), &(json!(1), json!(100)));
+        assert_eq!(var_diff.removed[0], "b");
+        assert_eq!(var_diff.added.get("c").unwrap(), &json!(3));
+    }
+
+    #[test]
+    fn test_calculate_diff_file_upload_human_text() {
+        let old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK-1".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "start".into(),
+            audit_log: vec![],
+            variables: HashMap::new(),
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+
+        let mut new = old.clone();
+        new.variables.insert(
+            "report".into(),
+            json!({
+                "type": "file",
+                "object_key": "file:test",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 1258291, // ~1.2 MB
+                "uploaded_at": "2026-04-03T12:00:00Z"
+            }),
+        );
+
+        let diff = calculate_diff(&old, &new);
+        let human = diff.human_readable.unwrap();
+        assert_eq!(human, "File 'report.pdf' uploaded (1.2 MB).");
+
+        // test KB format
+        let mut new2 = old.clone();
+        new2.variables.insert(
+            "config".into(),
+            json!({
+                "type": "file",
+                "object_key": "file:test",
+                "filename": "config.json",
+                "mime_type": "application/json",
+                "size_bytes": 1024, // 1.0 KB
+                "uploaded_at": "2026-04-03T12:00:00Z"
+            }),
+        );
+
+        let diff2 = calculate_diff(&old, &new2);
+        let human2 = diff2.human_readable.unwrap();
+        assert_eq!(human2, "File 'config.json' uploaded (1.0 KB).");
+    }
+
+    #[test]
+    fn test_human_description() {
+        assert_eq!(
+            HistoryEventType::InstanceStarted.human_description(),
+            "Process instance started"
+        );
+        assert_eq!(
+            HistoryEventType::InstanceCompleted.human_description(),
+            "Process instance completed"
+        );
+        assert_eq!(
+            HistoryEventType::InstanceDeleted.human_description(),
+            "Process instance was deleted"
+        );
+        assert_eq!(
+            HistoryEventType::TaskCompleted.human_description(),
+            "Task was completed"
+        );
+        assert_eq!(
+            HistoryEventType::VariableUpdated.human_description(),
+            "Variable was updated"
+        );
+        assert_eq!(
+            HistoryEventType::GatewayTaken.human_description(),
+            "Gateway path was taken"
+        );
+        assert_eq!(
+            HistoryEventType::ListenerExecuted.human_description(),
+            "Execution listener finished"
+        );
+        assert_eq!(
+            HistoryEventType::TokenAdvanced.human_description(),
+            "Token advanced to the next node"
+        );
+        assert_eq!(
+            HistoryEventType::TokenForked.human_description(),
+            "Token forked into multiple branches"
+        );
+        assert_eq!(
+            HistoryEventType::TokenJoined.human_description(),
+            "Multiple tokens joined into one"
+        );
+        assert_eq!(
+            HistoryEventType::BranchCompleted.human_description(),
+            "Branch execution completed"
+        );
+        assert_eq!(
+            HistoryEventType::Error.human_description(),
+            "An execution error occurred"
+        );
+    }
+
+    #[test]
+    fn test_calculate_diff_empty() {
+        let old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK-1".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "start".into(),
+            audit_log: vec![],
+            variables: HashMap::new(),
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+
+        let new = old.clone();
+        let diff = calculate_diff(&old, &new);
+
+        assert!(diff.is_empty());
+        assert!(diff.variables.is_none());
+        assert!(diff.status.is_none());
+        assert!(diff.current_node.is_none());
+        assert!(diff.human_readable.is_none());
+    }
+
+    #[test]
+    fn test_is_empty_all_none() {
+        let diff = HistoryDiff {
+            variables: None,
+            status: None,
+            current_node: None,
+            human_readable: None,
+        };
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_with_variables() {
+        // Catches: replace && with || in is_empty (each field individually)
+        let diff = HistoryDiff {
+            variables: Some(VariableDiff {
+                added: HashMap::new(),
+                removed: vec![],
+                changed: HashMap::new(),
+            }),
+            status: None,
+            current_node: None,
+            human_readable: None,
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_with_status_only() {
+        let diff = HistoryDiff {
+            variables: None,
+            status: Some(("Running".into(), "Completed".into())),
+            current_node: None,
+            human_readable: None,
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_with_current_node_only() {
+        let diff = HistoryDiff {
+            variables: None,
+            status: None,
+            current_node: Some(("a".into(), "b".into())),
+            human_readable: None,
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_with_human_readable_only() {
+        // Catches: replace is_empty -> bool with true
+        let diff = HistoryDiff {
+            variables: None,
+            status: None,
+            current_node: None,
+            human_readable: Some("something".into()),
+        };
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn test_with_diff_empty_does_not_set() {
+        // Catches: delete ! in with_diff (line 147)
+        let entry = HistoryEntry::new(
+            Uuid::new_v4(),
+            HistoryEventType::TokenAdvanced,
+            "original",
+            ActorType::Engine,
+            None,
+        );
+        let empty_diff = HistoryDiff {
+            variables: None,
+            status: None,
+            current_node: None,
+            human_readable: None,
+        };
+        let entry = entry.with_diff(empty_diff);
+        assert!(entry.diff.is_none());
+        assert_eq!(entry.description, "original");
+    }
+
+    #[test]
+    fn test_with_diff_non_empty_sets_description() {
+        let entry = HistoryEntry::new(
+            Uuid::new_v4(),
+            HistoryEventType::TokenAdvanced,
+            "original",
+            ActorType::Engine,
+            None,
+        );
+        let diff = HistoryDiff {
+            variables: None,
+            status: Some(("A".into(), "B".into())),
+            current_node: None,
+            human_readable: Some("Status changed".into()),
+        };
+        let entry = entry.with_diff(diff);
+        assert!(entry.diff.is_some());
+        assert_eq!(entry.description, "Status changed");
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_short_string() {
+        let v = json!("short");
+        assert_eq!(truncate_value_for_diff(&v), json!("short"));
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_long_string() {
+        // Catches: replace match guard s.len() > 1024 with true/false,
+        //          replace > with ==, <, >=
+        let long = "x".repeat(2048);
+        let result = truncate_value_for_diff(&json!(long));
+        let s = result.as_str().unwrap();
+        assert!(s.contains("truncated"));
+        assert!(s.contains("1024 chars"));
+        assert!(s.starts_with(&"x".repeat(1024)));
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_exactly_1024() {
+        let exact = "y".repeat(1024);
+        let result = truncate_value_for_diff(&json!(exact));
+        // Exactly 1024 should NOT be truncated (> 1024, not >=)
+        assert_eq!(result.as_str().unwrap(), exact);
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_large_array() {
+        // Catches: replace match guard a.len() > 128 with true/false,
+        //          replace > with ==, <, >=
+        let large_arr: Vec<i32> = (0..200).collect();
+        let result = truncate_value_for_diff(&json!(large_arr));
+        assert!(result.as_str().unwrap().contains("200 elements"));
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_small_array() {
+        let small_arr: Vec<i32> = (0..10).collect();
+        let result = truncate_value_for_diff(&json!(small_arr));
+        assert!(result.is_array());
+    }
+
+    #[test]
+    fn test_truncate_value_for_diff_exactly_128_array() {
+        let arr: Vec<i32> = (0..128).collect();
+        let result = truncate_value_for_diff(&json!(arr));
+        // Exactly 128 should NOT be truncated
+        assert!(result.is_array());
+    }
+
+    #[test]
+    fn test_format_file_human_text_mb() {
+        let v = json!({"type": "file", "filename": "big.zip", "size_bytes": 5242880});
+        let text = format_file_human_text("f", &v).unwrap();
+        // Catches: replace > with >= in format_file_human_text (line 183)
+        assert!(text.contains("5.0 MB"));
+    }
+
+    #[test]
+    fn test_format_file_human_text_kb() {
+        let v = json!({"type": "file", "filename": "small.txt", "size_bytes": 512});
+        let text = format_file_human_text("f", &v).unwrap();
+        assert!(text.contains("KB"));
+    }
+
+    #[test]
+    fn test_format_file_human_text_exactly_1mb() {
+        // Exactly 1_048_576: > 1_048_576 is false → should use KB, not MB
+        // (catches: replace > with >= in format_file_human_text)
+        let v = json!({"type": "file", "filename": "exact.bin", "size_bytes": 1048576});
+        let text = format_file_human_text("f", &v).unwrap();
+        assert!(
+            text.contains("KB"),
+            "Exactly 1 MB boundary should format as KB, got: {text}"
+        );
+
+        // 1 byte over → should use MB
+        let v2 = json!({"type": "file", "filename": "over.bin", "size_bytes": 1048577});
+        let text2 = format_file_human_text("f", &v2).unwrap();
+        assert!(
+            text2.contains("MB"),
+            "1 byte over 1 MB should format as MB, got: {text2}"
+        );
+    }
+
+    #[test]
+    fn test_format_file_human_text_non_file() {
+        let v = json!({"type": "string", "value": "hello"});
+        assert!(format_file_human_text("f", &v).is_none());
+    }
+
+    #[test]
+    fn test_calculate_diff_only_variables_changed() {
+        // Catches: replace || with && in calculate_diff_from_snapshot (line 318)
+        let old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "node".into(),
+            audit_log: vec![],
+            variables: {
+                let mut m = HashMap::new();
+                m.insert("x".into(), json!(1));
+                m
+            },
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+        let mut new = old.clone();
+        // Only change variables, not status or node
+        new.variables.insert("x".into(), json!(2));
+
+        let diff = calculate_diff(&old, &new);
+        assert!(!diff.is_empty());
+        assert!(diff.variables.is_some());
+        assert!(diff.status.is_none());
+        assert!(diff.current_node.is_none());
+        assert!(diff.human_readable.is_some());
+    }
+
+    #[test]
+    fn test_calculate_diff_only_removed() {
+        let mut old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "node".into(),
+            audit_log: vec![],
+            variables: HashMap::new(),
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+        old.variables.insert("gone".into(), json!("bye"));
+
+        let new = ProcessInstance {
+            variables: HashMap::new(),
+            ..old.clone()
+        };
+        let diff = calculate_diff(&old, &new);
+        let var_diff = diff.variables.unwrap();
+        assert!(var_diff.removed.contains(&"gone".to_string()));
+        assert!(var_diff.added.is_empty());
+        assert!(var_diff.changed.is_empty());
+    }
+
+    #[test]
+    fn test_diff_snapshot_produces_same_result_as_full_clone() {
+        let mut old = ProcessInstance {
+            id: Uuid::new_v4(),
+            definition_key: Uuid::new_v4(),
+            business_key: "BK-1".into(),
+            parent_instance_id: None,
+            state: InstanceState::Running,
+            current_node: "start".into(),
+            audit_log: vec!["log1".into(), "log2".into()],
+            variables: HashMap::new(),
+            tokens: HashMap::new(),
+            active_tokens: vec![],
+            join_barriers: HashMap::new(),
+            multi_instance_state: HashMap::new(),
+            compensation_log: Vec::new(),
+            started_at: None,
+            completed_at: None,
+        };
+        old.variables.insert("a".into(), json!(1));
+        old.variables.insert("b".into(), json!(2));
+
+        let snapshot = DiffSnapshot::from_instance(&old);
+
+        let mut new = old.clone();
+        new.current_node = "task1".into();
+        new.state = InstanceState::WaitingOnUserTask {
+            task_id: Uuid::new_v4(),
+        };
+        new.variables.insert("a".into(), json!(100)); // changed
+        new.variables.remove("b"); // removed
+        new.variables.insert("c".into(), json!(3)); // added
+
+        let diff_full = calculate_diff(&old, &new);
+        let diff_snap = calculate_diff_from_snapshot(&snapshot, &new);
+
+        assert_eq!(diff_full.status, diff_snap.status);
+        assert_eq!(diff_full.current_node, diff_snap.current_node);
+        assert_eq!(diff_full.human_readable, diff_snap.human_readable);
+
+        let var_diff_full = diff_full.variables.unwrap();
+        let var_diff_snap = diff_snap.variables.unwrap();
+
+        assert_eq!(var_diff_full.added, var_diff_snap.added);
+        assert_eq!(var_diff_full.removed, var_diff_snap.removed);
+        assert_eq!(var_diff_full.changed, var_diff_snap.changed);
+    }
+}

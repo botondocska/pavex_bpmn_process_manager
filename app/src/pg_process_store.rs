@@ -207,10 +207,7 @@ async fn load_tokens_for_instance(pool: &PgPool, instance_id: &str) -> anyhow::R
                 // the engine never writes this back, so this is read-only.
                 updated_at: row
                     .updated_at
-                    .map(|t: time::OffsetDateTime| {
-                        t.format(&time::format_description::well_known::Rfc3339)
-                    })
-                    .transpose()?,
+                    .map(|t|t.to_rfc2822()),
             })
         })
         .collect()

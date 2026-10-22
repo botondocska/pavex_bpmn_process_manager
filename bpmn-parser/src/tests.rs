@@ -1,0 +1,1060 @@
+use crate::parser::parse_bpmn_xml;
+use engine_core::model::{BpmnElement, ListenerEvent};
+
+#[test]
+fn parse_simple_bpmn() {
+    let xml = r#"
+        <bpmn:definitions id="def1" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="start1" />
+                <serviceTask id="svc1" data-handler="my_handler" />
+                <userTask id="ut1" data-assignee="alice" />
+                <endEvent id="end1" />
+                <sequenceFlow id="f1" sourceRef="start1" targetRef="svc1" />
+                <sequenceFlow id="f2" sourceRef="svc1" targetRef="ut1" />
+                <sequenceFlow id="f3" sourceRef="ut1" targetRef="end1" />
+            </process>
+        </bpmn:definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert_eq!(def.id, "proc1");
+    assert!(def.nodes.contains_key("start1"));
+    assert!(def.nodes.contains_key("svc1"));
+    assert!(def.nodes.contains_key("ut1"));
+    assert!(def.nodes.contains_key("end1"));
+
+    assert_eq!(def.next_node("start1"), Some("svc1"));
+    assert_eq!(def.next_node("svc1"), Some("ut1"));
+    assert_eq!(def.next_node("ut1"), Some("end1"));
+
+    match def.nodes.get("svc1").unwrap() {
+        BpmnElement::ServiceTask { topic, .. } => assert_eq!(topic, "my_handler"),
+        _ => panic!("Expected ServiceTask"),
+    }
+
+    match def.nodes.get("ut1").unwrap() {
+        BpmnElement::UserTask(a) => assert_eq!(a, "alice"),
+        _ => panic!("Expected UserTask"),
+    }
+}
+
+#[test]
+fn parse_conditional_flows() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="start1" />
+                <exclusiveGateway id="gw1" />
+                <endEvent id="end1" />
+                <endEvent id="end2" />
+                
+                <sequenceFlow id="f1" sourceRef="start1" targetRef="gw1" />
+                
+                <sequenceFlow id="f2" sourceRef="gw1" targetRef="end1">
+                    <conditionExpression xsi:type="tFormalExpression">amount &gt; 100</conditionExpression>
+                </sequenceFlow>
+                
+                <sequenceFlow id="f3" sourceRef="gw1" targetRef="end2" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+
+    // Gateway must be parsed as ExclusiveGateway, NOT ServiceTask
+    match def.nodes.get("gw1").unwrap() {
+        BpmnElement::ExclusiveGateway { default } => assert_eq!(*default, None),
+        other => panic!("Expected ExclusiveGateway, got {:?}", other),
+    }
+
+    let flows = def.next_nodes("gw1");
+    assert_eq!(flows.len(), 2);
+
+    let flow1 = flows.iter().find(|f| f.target == "end1").unwrap();
+    assert_eq!(flow1.condition, Some("amount > 100".to_string()));
+
+    let flow2 = flows.iter().find(|f| f.target == "end2").unwrap();
+    assert_eq!(flow2.condition, None);
+}
+
+#[test]
+fn parse_exclusive_gateway_with_default() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="start1" />
+                <exclusiveGateway id="gw1" default="f3" />
+                <userTask id="ut1" data-assignee="alice" />
+                <userTask id="ut2" data-assignee="bob" />
+                <endEvent id="end1" />
+                
+                <sequenceFlow id="f1" sourceRef="start1" targetRef="gw1" />
+                <sequenceFlow id="f2" sourceRef="gw1" targetRef="ut1">
+                    <conditionExpression xsi:type="tFormalExpression">x &gt; 0</conditionExpression>
+                </sequenceFlow>
+                <sequenceFlow id="f3" sourceRef="gw1" targetRef="ut2" />
+                <sequenceFlow id="f4" sourceRef="ut1" targetRef="end1" />
+                <sequenceFlow id="f5" sourceRef="ut2" targetRef="end1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+
+    // Default attribute must resolve flow "f3" → target "ut2"
+    match def.nodes.get("gw1").unwrap() {
+        BpmnElement::ExclusiveGateway { default } => {
+            assert_eq!(default.as_deref(), Some("ut2"));
+        }
+        other => panic!("Expected ExclusiveGateway, got {:?}", other),
+    }
+
+    // User tasks must be parsed correctly
+    match def.nodes.get("ut1").unwrap() {
+        BpmnElement::UserTask(a) => assert_eq!(a, "alice"),
+        other => panic!("Expected UserTask, got {:?}", other),
+    }
+    match def.nodes.get("ut2").unwrap() {
+        BpmnElement::UserTask(a) => assert_eq!(a, "bob"),
+        other => panic!("Expected UserTask, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_timer_start() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="start1">
+                    <timerEventDefinition>
+                        <timeDuration>PT60S</timeDuration>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="end1" />
+                <sequenceFlow id="f1" sourceRef="start1" targetRef="end1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("start1").unwrap() {
+        BpmnElement::TimerStartEvent(engine_core::timer_definition::TimerDefinition::Duration(
+            d,
+        )) => assert_eq!(d.as_secs(), 60),
+        _ => panic!("Expected TimerStartEvent"),
+    }
+}
+
+/// Regression test: bpmn-js generates interleaved elements, e.g.
+/// `startEvent`, `sequenceFlow`, `serviceTask`, `sequenceFlow`, `endEvent`.
+/// quick-xml 0.31 rejected this as "duplicate field `sequenceFlow`".
+/// Fixed by upgrading to quick-xml 0.37 with `overlapped-lists` feature.
+#[test]
+fn parse_interleaved_bpmn_js_output() {
+    let xml = r#"
+        <bpmn2:definitions id="Definitions_1" xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <bpmn2:process id="Process_1" isExecutable="true">
+                <bpmn2:startEvent id="StartEvent_1" />
+                <bpmn2:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="ServiceTask_1" />
+                <bpmn2:serviceTask id="ServiceTask_1" data-handler="validate" />
+                <bpmn2:sequenceFlow id="Flow_2" sourceRef="ServiceTask_1" targetRef="UserTask_1" />
+                <bpmn2:userTask id="UserTask_1" data-assignee="admin" />
+                <bpmn2:sequenceFlow id="Flow_3" sourceRef="UserTask_1" targetRef="EndEvent_1" />
+                <bpmn2:endEvent id="EndEvent_1" />
+            </bpmn2:process>
+        </bpmn2:definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).expect("should parse interleaved BPMN XML");
+    assert_eq!(def.id, "Process_1");
+    assert_eq!(def.nodes.len(), 4);
+    assert_eq!(def.flows.len(), 3);
+    assert_eq!(def.next_node("StartEvent_1"), Some("ServiceTask_1"));
+    assert_eq!(def.next_node("ServiceTask_1"), Some("UserTask_1"));
+    assert_eq!(def.next_node("UserTask_1"), Some("EndEvent_1"));
+}
+
+#[test]
+fn test_parse_execution_listeners_and_scripts() {
+    let xml = r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_1">
+  <bpmn:process id="Process_1" isExecutable="true">
+    <bpmn:extensionElements>
+      <bpmn:executionListener event="start">
+        <bpmn:script scriptFormat="rhai">
+          print("Process Started");
+        </bpmn:script>
+      </bpmn:executionListener>
+    </bpmn:extensionElements>
+    
+    <bpmn:startEvent id="Start_1" />
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Task_1" />
+    
+    <bpmn:serviceTask id="Task_1">
+      <bpmn:extensionElements>
+        <bpmn:executionListener event="end">
+          <bpmn:script scriptFormat="rhai">
+            print("Task Ended");
+          </bpmn:script>
+        </bpmn:executionListener>
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="End_1" />
+    <bpmn:endEvent id="End_1" />
+  </bpmn:process>
+</bpmn:definitions>
+"#;
+    let p = parse_bpmn_xml(xml).expect("Should parse");
+
+    let mut process_listeners = p.listeners.get("Process_1").cloned().unwrap_or_default();
+    process_listeners.sort_by_key(|l| match l.event {
+        ListenerEvent::Start => 1,
+        ListenerEvent::End => 2,
+    });
+
+    assert_eq!(process_listeners.len(), 1);
+    assert!(matches!(process_listeners[0].event, ListenerEvent::Start));
+    assert_eq!(process_listeners[0].script, "print(\"Process Started\");");
+
+    let task_listeners = p.listeners.get("Task_1").cloned().unwrap_or_default();
+    assert_eq!(task_listeners.len(), 1);
+    assert!(matches!(task_listeners[0].event, ListenerEvent::End));
+    assert_eq!(task_listeners[0].script, "print(\"Task Ended\");");
+}
+
+// ---- WP-5: Additional test coverage ----
+
+#[test]
+fn parse_parallel_gateway() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1" />
+                <parallelGateway id="fork" />
+                <serviceTask id="a" data-topic="task_a" />
+                <serviceTask id="b" data-topic="task_b" />
+                <parallelGateway id="join" />
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="fork" />
+                <sequenceFlow id="f2" sourceRef="fork" targetRef="a" />
+                <sequenceFlow id="f3" sourceRef="fork" targetRef="b" />
+                <sequenceFlow id="f4" sourceRef="a" targetRef="join" />
+                <sequenceFlow id="f5" sourceRef="b" targetRef="join" />
+                <sequenceFlow id="f6" sourceRef="join" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert!(matches!(
+        def.nodes.get("fork").unwrap(),
+        BpmnElement::ParallelGateway
+    ));
+    assert!(matches!(
+        def.nodes.get("join").unwrap(),
+        BpmnElement::ParallelGateway
+    ));
+    assert_eq!(def.next_nodes("fork").len(), 2);
+}
+
+#[test]
+fn parse_inclusive_gateway() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1" />
+                <inclusiveGateway id="gw1" />
+                <endEvent id="e1" />
+                <endEvent id="e2" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="gw1" />
+                <sequenceFlow id="f2" sourceRef="gw1" targetRef="e1">
+                    <conditionExpression xsi:type="tFormalExpression">x &gt; 0</conditionExpression>
+                </sequenceFlow>
+                <sequenceFlow id="f3" sourceRef="gw1" targetRef="e2">
+                    <conditionExpression xsi:type="tFormalExpression">y &gt; 0</conditionExpression>
+                </sequenceFlow>
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert!(matches!(
+        def.nodes.get("gw1").unwrap(),
+        BpmnElement::InclusiveGateway
+    ));
+    assert_eq!(def.next_nodes("gw1").len(), 2);
+}
+
+#[test]
+fn parse_message_start_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <message id="msg1" name="OrderReceived" />
+            <process id="proc1">
+                <startEvent id="s1">
+                    <messageEventDefinition messageRef="msg1" />
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("s1").unwrap() {
+        BpmnElement::MessageStartEvent { message_name } => {
+            assert_eq!(message_name, "OrderReceived");
+        }
+        other => panic!("Expected MessageStartEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_message_catch_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <message id="msg1" name="PaymentConfirmed" />
+            <process id="proc1">
+                <startEvent id="s1" />
+                <intermediateCatchEvent id="wait_payment">
+                    <messageEventDefinition messageRef="msg1" />
+                </intermediateCatchEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="wait_payment" />
+                <sequenceFlow id="f2" sourceRef="wait_payment" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("wait_payment").unwrap() {
+        BpmnElement::MessageCatchEvent { message_name } => {
+            assert_eq!(message_name, "PaymentConfirmed");
+        }
+        other => panic!("Expected MessageCatchEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_error_end_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <error id="err1" errorCode="VALIDATION_FAILED" />
+            <process id="proc1">
+                <startEvent id="s1" />
+                <endEvent id="e1">
+                    <errorEventDefinition errorRef="err1" />
+                </endEvent>
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("e1").unwrap() {
+        BpmnElement::ErrorEndEvent { error_code } => {
+            assert_eq!(error_code, "VALIDATION_FAILED");
+        }
+        other => panic!("Expected ErrorEndEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_timer_catch_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1" />
+                <intermediateCatchEvent id="wait">
+                    <timerEventDefinition>
+                        <timeDuration>PT30S</timeDuration>
+                    </timerEventDefinition>
+                </intermediateCatchEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="wait" />
+                <sequenceFlow id="f2" sourceRef="wait" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("wait").unwrap() {
+        BpmnElement::TimerCatchEvent(engine_core::timer_definition::TimerDefinition::Duration(
+            d,
+        )) => assert_eq!(d.as_secs(), 30),
+        other => panic!("Expected TimerCatchEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_boundary_timer_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1" />
+                <serviceTask id="task1" data-topic="long_task" />
+                <boundaryEvent id="timeout" attachedToRef="task1" cancelActivity="true">
+                    <timerEventDefinition>
+                        <timeDuration>PT5M</timeDuration>
+                    </timerEventDefinition>
+                </boundaryEvent>
+                <endEvent id="e1" />
+                <endEvent id="e2" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="task1" />
+                <sequenceFlow id="f2" sourceRef="task1" targetRef="e1" />
+                <sequenceFlow id="f3" sourceRef="timeout" targetRef="e2" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("timeout").unwrap() {
+        BpmnElement::BoundaryTimerEvent {
+            attached_to,
+            timer,
+            cancel_activity,
+        } => {
+            assert_eq!(attached_to, "task1");
+            match timer {
+                engine_core::timer_definition::TimerDefinition::Duration(d) => {
+                    assert_eq!(d.as_secs(), 300)
+                }
+                _ => panic!("Expected Duration timer"),
+            }
+            assert!(*cancel_activity);
+        }
+        other => panic!("Expected BoundaryTimerEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_boundary_error_event() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <error id="err1" errorCode="PAYMENT_FAILED" />
+            <process id="proc1">
+                <startEvent id="s1" />
+                <serviceTask id="task1" data-topic="charge" />
+                <boundaryEvent id="on_error" attachedToRef="task1">
+                    <errorEventDefinition errorRef="err1" />
+                </boundaryEvent>
+                <endEvent id="e1" />
+                <endEvent id="e2" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="task1" />
+                <sequenceFlow id="f2" sourceRef="task1" targetRef="e1" />
+                <sequenceFlow id="f3" sourceRef="on_error" targetRef="e2" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("on_error").unwrap() {
+        BpmnElement::BoundaryErrorEvent {
+            attached_to,
+            error_code,
+        } => {
+            assert_eq!(attached_to, "task1");
+            assert_eq!(error_code.as_deref(), Some("PAYMENT_FAILED"));
+        }
+        other => panic!("Expected BoundaryErrorEvent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_picks_executable_process() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="collab_proc" isExecutable="false">
+                <startEvent id="cs1" />
+                <endEvent id="ce1" />
+                <sequenceFlow id="cf1" sourceRef="cs1" targetRef="ce1" />
+            </process>
+            <process id="main_proc" isExecutable="true">
+                <startEvent id="s1" />
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert_eq!(def.id, "main_proc", "Should pick the executable process");
+}
+
+#[test]
+fn parse_duration_rejects_invalid_input() {
+    // P1D (days not supported), empty, garbage — all must fail
+    let template = |dur: &str| {
+        format!(
+            r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1">
+                    <timerEventDefinition>
+                        <timeDuration>{}</timeDuration>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>"#,
+            dur
+        )
+    };
+
+    // Valid inputs must still work
+    assert!(parse_bpmn_xml(&template("PT5S")).is_ok());
+    assert!(parse_bpmn_xml(&template("PT1H30M")).is_ok());
+    assert!(parse_bpmn_xml(&template("PT0S")).is_ok());
+
+    // Invalid inputs must now fail
+    // P1D is now supported
+    assert!(
+        parse_bpmn_xml(&template("P1D")).is_ok(),
+        "P1D should be accepted"
+    );
+    assert!(
+        parse_bpmn_xml(&template("")).is_err(),
+        "Empty duration should be rejected"
+    );
+    assert!(
+        parse_bpmn_xml(&template("HELLO")).is_err(),
+        "Garbage should be rejected"
+    );
+    assert!(
+        parse_bpmn_xml(&template("PT")).is_err(),
+        "PT without value should be rejected"
+    );
+}
+
+#[test]
+fn parse_event_based_gateway() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <message id="msg1" name="Approval" />
+            <process id="proc1">
+                <startEvent id="s1" />
+                <eventBasedGateway id="ebgw" />
+                <intermediateCatchEvent id="wait_msg">
+                    <messageEventDefinition messageRef="msg1" />
+                </intermediateCatchEvent>
+                <intermediateCatchEvent id="wait_timer">
+                    <timerEventDefinition>
+                        <timeDuration>PT30S</timeDuration>
+                    </timerEventDefinition>
+                </intermediateCatchEvent>
+                <endEvent id="e1" />
+                <endEvent id="e2" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="ebgw" />
+                <sequenceFlow id="f2" sourceRef="ebgw" targetRef="wait_msg" />
+                <sequenceFlow id="f3" sourceRef="ebgw" targetRef="wait_timer" />
+                <sequenceFlow id="f4" sourceRef="wait_msg" targetRef="e1" />
+                <sequenceFlow id="f5" sourceRef="wait_timer" targetRef="e2" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert!(
+        matches!(
+            def.nodes.get("ebgw").unwrap(),
+            BpmnElement::EventBasedGateway
+        ),
+        "Expected EventBasedGateway"
+    );
+    assert_eq!(def.next_nodes("ebgw").len(), 2);
+    // Verify the targets are correct event types
+    assert!(matches!(
+        def.nodes.get("wait_msg").unwrap(),
+        BpmnElement::MessageCatchEvent { .. }
+    ));
+    assert!(matches!(
+        def.nodes.get("wait_timer").unwrap(),
+        BpmnElement::TimerCatchEvent(_)
+    ));
+}
+
+#[test]
+fn parse_event_subprocess_accepted() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <error id="err1" errorCode="VALIDATION_FAILED" />
+            <process id="proc1">
+                <startEvent id="s1" />
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+                <subProcess id="sub1" triggeredByEvent="true">
+                    <startEvent id="sub_s1">
+                        <errorEventDefinition errorRef="err1" />
+                    </startEvent>
+                    <endEvent id="sub_e1" />
+                    <sequenceFlow id="sub_f1" sourceRef="sub_s1" targetRef="sub_e1" />
+                </subProcess>
+            </process>
+        </definitions>
+    "#;
+
+    // Event sub-processes (triggeredByEvent="true") must NOT cause a parse error
+    let result = parse_bpmn_xml(xml);
+    assert!(
+        result.is_ok(),
+        "Event sub-process should be accepted: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn parse_regular_subprocess_accepted() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1" />
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="sub1" />
+                <sequenceFlow id="f2" sourceRef="sub1" targetRef="e1" />
+                <subProcess id="sub1">
+                    <startEvent id="sub_s1" />
+                    <endEvent id="sub_e1" />
+                    <sequenceFlow id="sub_f1" sourceRef="sub_s1" targetRef="sub_e1" />
+                </subProcess>
+            </process>
+        </definitions>
+    "#;
+
+    // Regular embedded sub-processes are now fully supported.
+    let result = parse_bpmn_xml(xml);
+    assert!(
+        result.is_ok(),
+        "Regular embedded sub-process should be parsed"
+    );
+}
+
+#[test]
+fn parse_time_date() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1">
+                    <timerEventDefinition>
+                        <timeDate>2026-04-06T14:30:00Z</timeDate>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("s1").unwrap() {
+        BpmnElement::TimerStartEvent(
+            engine_core::timer_definition::TimerDefinition::AbsoluteDate(dt),
+        ) => {
+            assert_eq!(dt.to_rfc3339(), "2026-04-06T14:30:00+00:00");
+        }
+        _ => panic!("Expected TimerStartEvent with AbsoluteDate"),
+    }
+}
+
+#[test]
+fn parse_time_cycle_cron() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1">
+                    <timerEventDefinition>
+                        <timeCycle>*/5 * * * *</timeCycle>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("s1").unwrap() {
+        BpmnElement::TimerStartEvent(
+            engine_core::timer_definition::TimerDefinition::CronCycle {
+                expression,
+                max_repetitions,
+            },
+        ) => {
+            assert_eq!(expression, "*/5 * * * *");
+            assert_eq!(*max_repetitions, None);
+        }
+        _ => panic!("Expected TimerStartEvent with CronCycle"),
+    }
+}
+
+#[test]
+fn parse_time_cycle_repeating_interval() {
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1">
+                    <timerEventDefinition>
+                        <timeCycle>R3/PT10H</timeCycle>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("s1").unwrap() {
+        BpmnElement::TimerStartEvent(
+            engine_core::timer_definition::TimerDefinition::RepeatingInterval {
+                repetitions,
+                interval,
+            },
+        ) => {
+            assert_eq!(*repetitions, Some(3));
+            assert_eq!(interval.as_secs(), 36000);
+        }
+        _ => panic!("Expected TimerStartEvent with RepeatingInterval"),
+    }
+}
+#[test]
+fn parse_time_cycle_repeating_interval_compact() {
+    // Compact format without slash: R3PT30S (as produced by bpmn-js properties panel)
+    let xml = r#"
+        <definitions id="def1" xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="s1">
+                    <timerEventDefinition>
+                        <timeCycle>R3PT30S</timeCycle>
+                    </timerEventDefinition>
+                </startEvent>
+                <endEvent id="e1" />
+                <sequenceFlow id="f1" sourceRef="s1" targetRef="e1" />
+            </process>
+        </definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+    match def.nodes.get("s1").unwrap() {
+        BpmnElement::TimerStartEvent(
+            engine_core::timer_definition::TimerDefinition::RepeatingInterval {
+                repetitions,
+                interval,
+            },
+        ) => {
+            assert_eq!(*repetitions, Some(3));
+            assert_eq!(interval.as_secs(), 30);
+        }
+        _ => panic!("Expected TimerStartEvent with RepeatingInterval"),
+    }
+}
+
+#[test]
+fn parse_script_task() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+          <bpmn:process id="Process_1" isExecutable="true">
+            <bpmn:startEvent id="StartEvent_1"/>
+            <bpmn:scriptTask id="ScriptTask_1" bpmn:scriptFormat="rhai">
+              <bpmn:script>let x = 1;</bpmn:script>
+            </bpmn:scriptTask>
+            <bpmn:endEvent id="EndEvent_1"/>
+            <bpmn:sequenceFlow id="f1" sourceRef="StartEvent_1" targetRef="ScriptTask_1"/>
+            <bpmn:sequenceFlow id="f2" sourceRef="ScriptTask_1" targetRef="EndEvent_1"/>
+          </bpmn:process>
+        </bpmn:definitions>
+    "#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    let node = def.get_node("ScriptTask_1").unwrap();
+    assert!(matches!(node, BpmnElement::ScriptTask { script, .. } if script == "let x = 1;"));
+}
+
+#[test]
+fn parse_terminate_end_event() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+          <bpmn:process id="Process_1" isExecutable="true">
+            <bpmn:startEvent id="StartEvent_1"/>
+            <bpmn:endEvent id="EndEvent_1">
+              <bpmn:terminateEventDefinition />
+            </bpmn:endEvent>
+            <bpmn:sequenceFlow id="f1" sourceRef="StartEvent_1" targetRef="EndEvent_1"/>
+          </bpmn:process>
+        </bpmn:definitions>
+    "#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    let node = def.get_node("EndEvent_1").unwrap();
+    assert!(matches!(node, BpmnElement::TerminateEndEvent));
+}
+
+#[test]
+fn parse_send_task() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+          <bpmn:message id="Message_1" name="OrderShipped" />
+          <bpmn:process id="Process_1" isExecutable="true">
+            <bpmn:startEvent id="StartEvent_1"/>
+            <bpmn:sendTask id="SendTask_1">
+                <bpmn:messageEventDefinition bpmn:messageRef="Message_1" />
+            </bpmn:sendTask>
+            <bpmn:endEvent id="EndEvent_1"/>
+            <bpmn:sequenceFlow id="f1" sourceRef="StartEvent_1" targetRef="SendTask_1"/>
+            <bpmn:sequenceFlow id="f2" sourceRef="SendTask_1" targetRef="EndEvent_1"/>
+          </bpmn:process>
+        </bpmn:definitions>
+    "#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    let node = def.get_node("SendTask_1").unwrap();
+    assert!(
+        matches!(node, BpmnElement::SendTask { message_name, .. } if message_name == "OrderShipped")
+    );
+}
+
+#[test]
+fn parse_intermediate_message_throw() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+          <bpmn:message id="Message_1" name="OrderShipped" />
+          <bpmn:process id="Process_1" isExecutable="true">
+            <bpmn:startEvent id="StartEvent_1"/>
+            <bpmn:intermediateThrowEvent id="Throw_1">
+              <bpmn:messageEventDefinition bpmn:messageRef="Message_1" />
+            </bpmn:intermediateThrowEvent>
+            <bpmn:endEvent id="EndEvent_1"/>
+            <bpmn:sequenceFlow id="f1" sourceRef="StartEvent_1" targetRef="Throw_1"/>
+            <bpmn:sequenceFlow id="f2" sourceRef="Throw_1" targetRef="EndEvent_1"/>
+          </bpmn:process>
+        </bpmn:definitions>
+    "#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    let node = def.get_node("Throw_1").unwrap();
+    assert!(
+        matches!(node, BpmnElement::SendTask { message_name, .. } if message_name == "OrderShipped")
+    );
+}
+
+#[test]
+fn test_parse_complex_gateway() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+          <bpmn:process id="Process_1" isExecutable="true">
+            <bpmn:startEvent id="StartEvent_1"/>
+            <bpmn:complexGateway id="Complex_1" default="Flow_3">
+                <bpmn:activationCondition xsi:type="bpmn:tFormalExpression">
+                    token_count &gt;= 2
+                </bpmn:activationCondition>
+            </bpmn:complexGateway>
+            <bpmn:endEvent id="EndEvent_1"/>
+            <bpmn:endEvent id="EndEvent_2"/>
+            <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Complex_1"/>
+            <bpmn:sequenceFlow id="Flow_2" sourceRef="Complex_1" targetRef="EndEvent_1"/>
+            <bpmn:sequenceFlow id="Flow_3" sourceRef="Complex_1" targetRef="EndEvent_2"/>
+          </bpmn:process>
+        </bpmn:definitions>
+    "#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    let node = def.get_node("Complex_1").unwrap();
+
+    match node {
+        BpmnElement::ComplexGateway {
+            default,
+            join_condition,
+        } => {
+            assert_eq!(default.as_deref(), Some("EndEvent_2")); // Flow_3 points to EndEvent_2
+            assert_eq!(join_condition.as_deref(), Some("token_count >= 2"));
+        }
+        _ => panic!("Expected ComplexGateway"),
+    }
+}
+
+#[test]
+fn parse_escalation_events() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <escalation id="Esc_1" name="ReviewNeeded" escalationCode="ESC_REVIEW" />
+            <process id="proc1">
+                <startEvent id="start" />
+                <intermediateThrowEvent id="esc_throw">
+                    <escalationEventDefinition escalationRef="Esc_1" />
+                </intermediateThrowEvent>
+                <endEvent id="esc_end">
+                    <escalationEventDefinition escalationRef="Esc_1" />
+                </endEvent>
+                <serviceTask id="task1" data-topic="work" />
+                <boundaryEvent id="boundary_esc" attachedToRef="task1" cancelActivity="false">
+                    <escalationEventDefinition escalationRef="Esc_1" />
+                </boundaryEvent>
+                <endEvent id="end" />
+                <endEvent id="handler_end" />
+                <sequenceFlow id="f1" sourceRef="start" targetRef="task1" />
+                <sequenceFlow id="f2" sourceRef="task1" targetRef="esc_throw" />
+                <sequenceFlow id="f3" sourceRef="esc_throw" targetRef="esc_end" />
+                <sequenceFlow id="f4" sourceRef="boundary_esc" targetRef="handler_end" />
+            </process>
+        </bpmn:definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+
+    // Check escalation throw event
+    let throw = def.nodes.get("esc_throw").expect("esc_throw should exist");
+    match throw {
+        BpmnElement::EscalationThrowEvent { escalation_code } => {
+            assert_eq!(escalation_code, "ESC_REVIEW");
+        }
+        _ => panic!("Expected EscalationThrowEvent, got {:?}", throw),
+    }
+
+    // Check escalation end event
+    let end = def.nodes.get("esc_end").expect("esc_end should exist");
+    match end {
+        BpmnElement::EscalationEndEvent { escalation_code } => {
+            assert_eq!(escalation_code, "ESC_REVIEW");
+        }
+        _ => panic!("Expected EscalationEndEvent, got {:?}", end),
+    }
+
+    // Check boundary escalation event
+    let boundary = def
+        .nodes
+        .get("boundary_esc")
+        .expect("boundary_esc should exist");
+    match boundary {
+        BpmnElement::BoundaryEscalationEvent {
+            attached_to,
+            escalation_code,
+            cancel_activity,
+        } => {
+            assert_eq!(attached_to, "task1");
+            assert_eq!(escalation_code.as_deref(), Some("ESC_REVIEW"));
+            assert!(!cancel_activity);
+        }
+        _ => panic!("Expected BoundaryEscalationEvent, got {:?}", boundary),
+    }
+}
+
+#[test]
+fn parse_compensation_events() {
+    let xml = r#"
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+            <process id="proc1">
+                <startEvent id="start" />
+                <serviceTask id="task1" data-topic="work" />
+                <boundaryEvent id="boundary_comp" attachedToRef="task1">
+                    <compensateEventDefinition />
+                </boundaryEvent>
+                <serviceTask id="comp_handler" data-topic="undo_work" />
+                <intermediateThrowEvent id="comp_throw">
+                    <compensateEventDefinition activityRef="task1" />
+                </intermediateThrowEvent>
+                <endEvent id="comp_end">
+                    <compensateEventDefinition />
+                </endEvent>
+                <endEvent id="end" />
+                <sequenceFlow id="f1" sourceRef="start" targetRef="task1" />
+                <sequenceFlow id="f2" sourceRef="task1" targetRef="comp_throw" />
+                <sequenceFlow id="f3" sourceRef="comp_throw" targetRef="comp_end" />
+                <sequenceFlow id="f4" sourceRef="boundary_comp" targetRef="comp_handler" />
+                <sequenceFlow id="f5" sourceRef="comp_handler" targetRef="end" />
+            </process>
+        </bpmn:definitions>
+    "#;
+
+    let def = parse_bpmn_xml(xml).unwrap();
+
+    // Check compensation boundary event
+    let boundary = def
+        .nodes
+        .get("boundary_comp")
+        .expect("boundary_comp should exist");
+    match boundary {
+        BpmnElement::BoundaryCompensationEvent { attached_to } => {
+            assert_eq!(attached_to, "task1");
+        }
+        _ => panic!("Expected BoundaryCompensationEvent, got {:?}", boundary),
+    }
+
+    // Check compensation throw event
+    let throw = def
+        .nodes
+        .get("comp_throw")
+        .expect("comp_throw should exist");
+    match throw {
+        BpmnElement::CompensationThrowEvent { activity_ref } => {
+            assert_eq!(activity_ref.as_deref(), Some("task1"));
+        }
+        _ => panic!("Expected CompensationThrowEvent, got {:?}", throw),
+    }
+
+    // Check compensation end event
+    let end = def.nodes.get("comp_end").expect("comp_end should exist");
+    match end {
+        BpmnElement::CompensationEndEvent { activity_ref } => {
+            assert!(activity_ref.is_none());
+        }
+        _ => panic!("Expected CompensationEndEvent, got {:?}", end),
+    }
+}
+
+#[test]
+fn test_camunda_namespace_script_parsed() {
+    // bpmn-js/Camunda Modeler export BPMN with camunda: namespace prefix on
+    // executionListener and script elements. Verify these are parsed correctly.
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+             id="Definitions_1">
+  <process id="TestProcess" isExecutable="true">
+    <startEvent id="start"/>
+    <serviceTask id="task1">
+      <extensionElements>
+        <camunda:executionListener event="end">
+          <camunda:script scriptFormat="rhai">let result = 42;</camunda:script>
+        </camunda:executionListener>
+      </extensionElements>
+    </serviceTask>
+    <endEvent id="end"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="task1"/>
+    <sequenceFlow id="f2" sourceRef="task1" targetRef="end"/>
+  </process>
+</definitions>"#;
+
+    let def = parse_bpmn_xml(xml).expect("Should parse BPMN with camunda: namespace");
+    let listeners = def.listeners.get("task1").cloned().unwrap_or_default();
+    // camunda:executionListener must be recognized (namespace prefix stripped by quick-xml)
+    assert_eq!(
+        listeners.len(),
+        1,
+        "camunda:executionListener should be parsed; got listeners: {:?}",
+        listeners
+    );
+    assert!(matches!(listeners[0].event, ListenerEvent::End));
+    assert_eq!(listeners[0].script, "let result = 42;");
+}
+
+#[test]
+fn test_call_activity_parsed() {
+    // Verify that <callActivity calledElement="..."> is correctly parsed.
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_1">
+  <process id="ParentProcess" isExecutable="true">
+    <startEvent id="start"/>
+    <callActivity id="call1" calledElement="ChildProcess"/>
+    <endEvent id="end"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="call1"/>
+    <sequenceFlow id="f2" sourceRef="call1" targetRef="end"/>
+  </process>
+</definitions>"#;
+
+    let def = parse_bpmn_xml(xml).expect("Should parse BPMN with callActivity");
+    let node = def.nodes.get("call1").expect("call1 should exist");
+    match node {
+        BpmnElement::CallActivity { called_element } => {
+            assert_eq!(called_element, "ChildProcess");
+        }
+        _ => panic!("Expected CallActivity, got {:?}", node),
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "bpmn-parser"
+version = "0.7.21"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+quick-xml = { version = "0.41", features = ["serialize", "overlapped-lists"] }
+serde = { version = "1.0", features = ["derive"]  }
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+croner = "4"
+chrono = { version = "0.4", features = ["serde"] }
+workspace_hack = { version = "0.1", path = "../workspace_hack" }

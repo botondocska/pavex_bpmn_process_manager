@@ -18,7 +18,7 @@
       {% for instance in instances %}
       <tr>
         <td><a class="link link-primary" href="/processes/instances/{{ instance.id }}">{{ instance.id }}</a></td>
-        <td>{{ instance.process_def_id }}</td>
+        <td>{{ instance.process_name }}</td>
         <td>{{ instance.state }}</td>
       </tr>
       {% endfor %}

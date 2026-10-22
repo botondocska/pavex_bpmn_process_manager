@@ -8,3 +8,4 @@ PX_DATABASE__DATABASE_NAME = { value = "pavex_bpmn_process_manager_db" }
 PX_DATABASE__REQUIRE_SSL = { value = "false" }
 DATABASE_URL="postgres://postgres:postgres@localhost:5432/pavex_bpmn_process_manager_db"
 TAILWIND_BIN_PATH = "C:\\Users\\lordb\\.cache\\tailwind-bin\\tailwindcss.exe"
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS= "allow"

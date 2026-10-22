@@ -4,48 +4,40 @@
 <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-6 space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Instance {{ instance_id }}</h1>
-    {% if state == "Running" %}
-    <form hx-post="/processes/instances/{{ instance_id }}/cancel" hx-confirm="Cancel this instance? Cannot resume.">
-      <button type="submit" class="btn btn-warning btn-sm">Cancel instance</button>
-    </form>
-    {% endif %}
     <form hx-post="/processes/instances/{{ instance_id }}/delete" hx-confirm="Delete this instance?">
       <button type="submit" class="btn btn-error btn-sm">Delete instance</button>
     </form>
   </div>
-  <p class="text-sm opacity-70">State: {{ state }}</p>
+  <p class="text-sm opacity-70">Process: {{ process_name }} &middot; State: {{ state }}</p>
 
-  {% if tokens.is_empty() %}
-  <p class="text-sm opacity-70">No tokens.</p>
+  {% if rows.is_empty() %}
+  <p class="text-sm opacity-70">Nothing pending.</p>
   {% else %}
   <table class="table w-full">
     <thead>
       <tr>
-        <th>Token ID</th>
+        <th>Kind</th>
         <th>Node</th>
-        <th>Status</th>
+        <th>Detail</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
-      {% for token in tokens %}
+      {% for row in rows %}
       <tr>
-        <td>{{ token.id }}</td>
-        <td>{{ token.node_id }}</td>
-        <td>{{ token.status }}</td>
+        <td>{{ row.kind }}</td>
+        <td>{{ row.node }}</td>
+        <td>{{ row.detail }}</td>
         <td>
-          {% if let Some(label) = token.wait_label %}
-          <span class="text-xs opacity-70">{{ label }}</span>
-          {% endif %}
-          {% if token.status == "Waiting" && token.is_user_task %}
+          {% if row.is_user_task %}
           <form hx-post="/processes/instances/{{ instance_id }}/advance" class="inline-flex items-end gap-2 flex-wrap">
-            <input type="hidden" name="token_id" value="{{ token.id }}">
-            {% for choice in token.gateway_choices %}
+            <input type="hidden" name="task_id" value="{{ row.task_id }}">
+            {% for choice in row.gateway_choices %}
             <label class="flex flex-col text-xs gap-1">
               <span class="opacity-70">{{ choice.key }}</span>
               <select name="{{ choice.key }}" class="select select-bordered select-sm">
                 {% for v in choice.values %}
-                <option value="{{ v }}">{{ v }}</option>
+                <option value="{{ v.label }}">{{ v.label }}</option>
                 {% endfor %}
               </select>
             </label>
@@ -83,18 +75,19 @@
 <script>
   (async () => {
     const xml = {{ bpmn_xml_json|safe }};
-    const marker = {{ marker_json|safe }};
+    const markers = {{ markers_json|safe }};
     const viewer = new BpmnJS({ container: '#instance-canvas' });
     try {
       await viewer.importXML(xml);
       const canvas = viewer.get('canvas');
+      const overlays = viewer.get('overlays');
       canvas.zoom('fit-viewport');
-      if (marker) {
-        canvas.addMarker(marker.node_id, 'bpmn-active-node');
-        viewer.get('overlays').add(marker.node_id, {
-          position: { bottom: -6, left: 0 },
-          html: `<span class="bpmn-marker-label">${marker.label}</span>`
-        });
+      for (const m of markers) {
+        canvas.addMarker(m.node_id, 'bpmn-active-node');
+        const span = document.createElement('span'); // textContent: no HTML injection
+        span.className = 'bpmn-marker-label';
+        span.textContent = m.label;
+        overlays.add(m.node_id, { position: { bottom: -6, left: 0 }, html: span });
       }
     } catch (err) {
       console.error('Failed to render instance diagram', err);
