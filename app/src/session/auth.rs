@@ -2,8 +2,11 @@ use pavex::Response;
 use pavex_session::Session;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy)]
-pub struct CheckedInUser(pub Uuid);
+#[derive(Debug, Clone)]
+pub struct CheckedInUser {
+    pub id: Uuid,
+    pub groups: Vec<String>, // SIDs
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CheckInError {
@@ -21,7 +24,12 @@ impl CheckedInUser {
             .map_err(|_| CheckInError::NotLoggedIn)?
             .ok_or(CheckInError::NotLoggedIn)?;
         let id = Uuid::parse_str(&raw).map_err(|_| CheckInError::NotLoggedIn)?;
-        Ok(CheckedInUser(id))
+        let groups = session
+            .get::<Vec<String>>("groups")
+            .await
+            .map_err(|_| CheckInError::NotLoggedIn)?
+            .unwrap_or_default();
+        Ok(CheckedInUser { id, groups })
     }
 }
 

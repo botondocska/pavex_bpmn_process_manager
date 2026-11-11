@@ -16,3 +16,11 @@ cookies:
 timer:
   enabled: true
   poll_interval: "5 seconds"
+
+auth:
+  issuer_url: "http://localhost:8080/realms/test"
+  client_id: "bpm"
+  redirect_uri: "http://localhost:8000/auth/callback"
+  scopes: []
+  groups_claim: "group"
+  email_claim: "email"

@@ -53,7 +53,7 @@ pub async fn process_upload(
     bpmn_parser::parse_bpmn_xml(bpmn_xml)
         .map_err(|e| ProcessUploadError::InvalidBpmn(e.to_string()))?;
 
-    let process_id = insert_process(user.0, name, bpmn_xml, db_pool).await?;
+    let process_id = insert_process(user.id, name, bpmn_xml, db_pool).await?;
 
     // Deploy now so call activities in other processes can resolve it.
     ensure_deployed(engine, db_pool, process_id)

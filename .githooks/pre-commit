@@ -1,4 +1,5 @@
 #!/bin/sh
+#.githooks\pre-commit
 set -e
 
 echo ">>> cargo fmt"
@@ -7,13 +8,13 @@ cargo fmt --all -- --check
 echo ">>> cargo hakari generate"
 cargo hakari generate --diff
 
-echo ">>> cargo hakari manage-deps"
+echo ">>> cargo hakari manage-deps >>> cargo hakari manage-deps --dry-run"
 cargo hakari manage-deps --dry-run
 
-echo ">>> cargo sqlx prepare"
+echo ">>> cargo sqlx prepare >>> cargo sqlx prepare --workspace"
 cargo sqlx prepare --workspace
 
-echo ">>> cargo clippy"
+echo ">>> cargo clippy >>> cargo clippy --all-targets --all-features -- -D warnings"
 cargo clippy --all-targets --all-features -- -D warnings
 
 echo ">>> cargo px build"

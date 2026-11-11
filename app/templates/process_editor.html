@@ -18,7 +18,7 @@
     white-space: nowrap;
     pointer-events: none;
   }
-  .bpmn-task-type {
+  .bpmn-task-type, .bpmn-lane-group {
     display: inline-block; font-size: 11px; font-family: ui-monospace, monospace;
     padding: 1px 6px; border-radius: 9999px; white-space: nowrap; pointer-events: none;
     background: var(--color-base-100); color: var(--color-base-content);
@@ -49,7 +49,14 @@
       <input id="task-type" type="text" placeholder="timer:30s" class="input input-bordered w-full font-mono">
     </label>
   </div>
-  
+
+  <div id="lane-panel" class="bg-base-100 border border-base-300 p-4 rounded-lg shadow-md hidden">
+    <label class="flex flex-col text-xs gap-1">
+      <span class="opacity-70">Group ID (AD SID, or group name in Keycloak test). User tasks in this lane are assigned to it. Lane name (double-click the lane) is display only.</span>
+      <input id="lane-group" type="text" placeholder="S-1-5-21-..." class="input input-bordered w-full font-mono">
+    </label>
+  </div>
+
   <div class="bg-base-100 border border-base-300 rounded-lg shadow-md p-2">
     <div id="editor-canvas" class="w-full" style="height: 600px;"></div>
   </div>
@@ -59,7 +66,7 @@
 <script>
   // ---- Allowlists: edit here when engine gains node types ----
   const ALLOWED_TYPES = new Set([
-    'bpmn:Process', 'bpmn:Collaboration', 'bpmn:Participant', 'bpmn:Lane', 'bpmn:Group',
+    'bpmn:Process', 'bpmn:Collaboration', 'bpmn:Participant', 'bpmn:Lane', 'bpmn:LaneSet', 'bpmn:Group',
     'bpmn:StartEvent', 'bpmn:EndEvent', 'bpmn:UserTask', 'bpmn:ServiceTask',
     'bpmn:ExclusiveGateway', 'bpmn:ParallelGateway', 'bpmn:SequenceFlow',
   ]);
@@ -175,6 +182,29 @@
     moddleExtensions: { camunda: CAMUNDA_EXT },
   });
 
+  // ---- DOM refs ----
+  const flowPanel = document.getElementById('flow-panel');
+  const condInput = document.getElementById('flow-condition');
+  const taskPanel = document.getElementById('task-panel');
+  const taskInput = document.getElementById('task-type');
+  let selectedFlow = null;
+  const lanePanel = document.getElementById('lane-panel');
+  const laneGroupInput = document.getElementById('lane-group');
+  let selectedTask = null;
+  let selectedLane = null;
+
+  // ---- Lane group attrs: raw unprefixed attributes in moddle $attrs ----
+  // Written directly: updateProperties({$attrs}) is a no-op in bpmn-js (not a model property).
+  // Trade-off: no undo/redo for these edits. saveXML still serializes $attrs.
+  const laneAttr = (lane, key) => (lane.businessObject.$attrs || {})[key] || '';
+
+  function setLaneAttr(lane, key, value) {
+    const bo = lane.businessObject;
+    bo.$attrs = bo.$attrs || {};
+    if (value) bo.$attrs[key] = value; else delete bo.$attrs[key];
+    showOverlays(modeler);
+  }
+
   // ---- Validation ----
   function unsupportedTypes() {
     const bad = new Set();
@@ -183,17 +213,26 @@
       if (!t || t.startsWith('bpmndi:') || el.labelTarget) continue;
       if (!ALLOWED_TYPES.has(t)) bad.add(t);
     }
-    const badTasks = modeler.get('elementRegistry')
+    return [...bad];
+  }
+
+  function badServiceTasks() {
+    return modeler.get('elementRegistry')
       .filter((e) => e.type === 'bpmn:ServiceTask')
       .filter((e) => {
         const t = (e.businessObject.get('camunda:topic') || '').trim();
         return !t || (t.startsWith('timer:') && !/^timer:[1-9]\d*[smhd]$/.test(t));
-      });
-    if (badTasks.length) {
-      return showError('Service task needs a valid task type (timer:30s, 5m, 2h, 1d): ' + badTasks.map((e) => e.id).join(', '));
-    }
+      })
+      .map((e) => e.id);
+  }
 
-    return [...bad];
+  // Lanes holding user tasks but no group: tasks stay "unassigned" (anyone can advance).
+  function lanesMissingGroup() {
+    return modeler.get('elementRegistry')
+      .filter((e) => e.type === 'bpmn:Lane')
+      .filter((l) => !laneAttr(l, 'data-group').trim())
+      .filter((l) => (l.businessObject.flowNodeRef || []).some((n) => n.$type === 'bpmn:UserTask'))
+      .map((l) => l.businessObject.name || l.id);
   }
 
   function showError(msg) {
@@ -201,11 +240,13 @@
     document.getElementById('error-dialog').showModal();
   }
 
-  // ---- Show gateway conditions on arrows (overlays; XML untouched) ----
-  function showFlowConditions(viewer) {
+  // ---- Overlays: flow conditions, service task types, lane groups (XML untouched) ----
+  function showOverlays(viewer) {
     const overlays = viewer.get('overlays');
+    const registry = viewer.get('elementRegistry');
+
     overlays.remove({ type: 'flow-condition' });
-    for (const el of viewer.get('elementRegistry').filter((e) => e.type === 'bpmn:SequenceFlow')) {
+    for (const el of registry.filter((e) => e.type === 'bpmn:SequenceFlow')) {
       const expr = el.businessObject.conditionExpression;
       const text = expr && expr.body ? expr.body.trim().replace(/^\$\{\s*|\s*\}$/g, '') : '';
       if (!text) continue;
@@ -216,34 +257,46 @@
     }
 
     overlays.remove({ type: 'task-type' });
-    for (const el of viewer.get('elementRegistry').filter((e) => e.type === 'bpmn:ServiceTask')) {
+    for (const el of registry.filter((e) => e.type === 'bpmn:ServiceTask')) {
       const span = document.createElement('span');
       span.className = 'bpmn-task-type';
       span.textContent = el.businessObject.get('camunda:topic') || '⚠ no task type';
       overlays.add(el, 'task-type', { position: { bottom: -4, left: 0 }, html: span });
     }
+
+    overlays.remove({ type: 'lane-group' });
+    for (const el of registry.filter((e) => e.type === 'bpmn:Lane')) {
+      const group = laneAttr(el, 'data-group');
+      const span = document.createElement('span');
+      span.className = 'bpmn-lane-group';
+      span.textContent = group ? '👥 ' + group : '⚠ no group';
+      overlays.add(el, 'lane-group', { position: { bottom: 4, right: 4 }, html: span });
+    }
   }
-  modeler.on('import.done', () => showFlowConditions(modeler));
-  modeler.on('commandStack.changed', () => showFlowConditions(modeler));
+  modeler.on('import.done', () => showOverlays(modeler));
+  modeler.on('commandStack.changed', () => showOverlays(modeler));
 
-  // ---- Gateway edge condition input ----
-  const panel = document.getElementById('flow-panel');
-  const taskInput = document.getElementById('task-type');
-  let selectedFlow = null;
-
+  // ---- Selection: show matching panel ----
   modeler.on('selection.changed', ({ newSelection }) => {
     const el = newSelection[0];
-    selectedFlow = null; selectedTask = null;
-    panel.classList.add('hidden'); taskPanel.classList.add('hidden');
+    selectedFlow = null; selectedTask = null; selectedLane = null;
+    flowPanel.classList.add('hidden');
+    taskPanel.classList.add('hidden');
+    lanePanel.classList.add('hidden');
+
     if (el && el.type === 'bpmn:SequenceFlow' && el.source && el.source.type === 'bpmn:ExclusiveGateway') {
       selectedFlow = el;
       const expr = el.businessObject.conditionExpression;
       condInput.value = expr ? expr.body : '';
-      panel.classList.remove('hidden');
+      flowPanel.classList.remove('hidden');
     } else if (el && el.type === 'bpmn:ServiceTask') {
       selectedTask = el;
       taskInput.value = el.businessObject.get('camunda:topic') || '';
       taskPanel.classList.remove('hidden');
+    } else if (el && el.type === 'bpmn:Lane') {
+      selectedLane = el;
+      laneGroupInput.value = laneAttr(el, 'data-group');
+      lanePanel.classList.remove('hidden');
     }
   });
 
@@ -261,6 +314,11 @@
     modeler.get('modeling').updateProperties(selectedFlow, { conditionExpression: expr });
   });
 
+  // `input` event (not `change`): value saved per keystroke, survives clicking Save without blur.
+  laneGroupInput.addEventListener('input', () => {
+    if (selectedLane) setLaneAttr(selectedLane, 'data-group', laneGroupInput.value.trim());
+  });
+
   // ---- Save ----
   document.getElementById('save-btn').addEventListener('click', async () => {
     const name = document.getElementById('process-name').value.trim();
@@ -269,8 +327,18 @@
     const bad = unsupportedTypes();
     if (bad.length) return showError('Unsupported element types: ' + bad.join(', '));
 
+    const badTasks = badServiceTasks();
+    if (badTasks.length) {
+      return showError('Service task needs a valid task type (timer:30s, 5m, 2h, 1d): ' + badTasks.join(', '));
+    }
+
     const pools = modeler.get('elementRegistry').filter((e) => e.type === 'bpmn:Participant');
     if (pools.length > 1) return showError('Engine supports one participant per process.');
+
+    const noGroup = lanesMissingGroup();
+    if (noGroup.length && !confirm(
+      'Lanes with user tasks but no group (tasks become unassigned, anyone can advance): '
+      + noGroup.join(', ') + '. Save anyway?')) return;
 
     const { xml } = await modeler.saveXML({ format: true });
     const res = await fetch('/processes/upload', {

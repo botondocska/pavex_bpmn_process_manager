@@ -111,6 +111,9 @@ pub(crate) struct BpmnProcess {
     #[serde(rename = "@id")]
     pub id: String,
 
+    #[serde(rename = "laneSet", default)]
+    pub lane_sets: Vec<BpmnLaneSet>,
+
     #[serde(rename = "@isExecutable", default)]
     pub is_executable: Option<bool>,
 
@@ -187,6 +190,26 @@ pub(crate) struct BpmnProcess {
     pub intermediate_throw_events: Vec<BpmnIntermediateThrowEvent>,
     #[serde(rename = "intermediateCatchEvent", default)]
     pub intermediate_catch_events: Vec<BpmnIntermediateCatchEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnLaneSet {
+    #[serde(rename = "lane", default)]
+    pub lanes: Vec<BpmnLane>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnLane {
+    #[serde(rename = "@data-group", default)]
+    pub group: Option<String>,
+    #[serde(rename = "flowNodeRef", default)]
+    pub flow_node_refs: Vec<BpmnFlowNodeRef>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BpmnFlowNodeRef {
+    #[serde(rename = "$value")]
+    pub value: String,
 }
 
 #[derive(Debug, Deserialize)]

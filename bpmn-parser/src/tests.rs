@@ -2,6 +2,28 @@ use crate::parser::parse_bpmn_xml;
 use engine_core::model::{BpmnElement, ListenerEvent};
 
 #[test]
+fn parse_lane_group_assignee() {
+    let xml = r#"
+        <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" id="d">
+        <process id="p" isExecutable="true">
+            <laneSet id="ls">
+            <lane id="L1" name="Finance" data-group="S-1-5-21-1">
+                <flowNodeRef>ut1</flowNodeRef>
+            </lane>
+            </laneSet>
+            <startEvent id="s"/>
+            <userTask id="ut1"/>
+            <endEvent id="e"/>
+            <sequenceFlow id="f1" sourceRef="s" targetRef="ut1"/>
+            <sequenceFlow id="f2" sourceRef="ut1" targetRef="e"/>
+        </process>
+        </definitions>"#;
+    let def = parse_bpmn_xml(xml).unwrap();
+    assert!(matches!(def.nodes.get("ut1").unwrap(),
+        BpmnElement::UserTask(a) if a == "S-1-5-21-1"));
+}
+
+#[test]
 fn parse_simple_bpmn() {
     let xml = r#"
         <bpmn:definitions id="def1" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">

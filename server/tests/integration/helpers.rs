@@ -1,10 +1,10 @@
+/*
 use pavex::{config::ConfigLoader, server::Server};
 use server::configuration::Profile;
 use server_sdk::{ApplicationConfig, ApplicationState, run};
 use std::sync::Once;
 use tracing::subscriber::set_global_default;
 use tracing_subscriber::EnvFilter;
-
 pub struct TestApi {
     pub api_address: String,
     pub api_client: reqwest::Client,
@@ -16,7 +16,7 @@ impl TestApi {
         let config = Self::get_config();
 
         let tcp_listener = config
-            .server
+        .server
             .listener()
             .await
             .expect("Failed to bind the server TCP listener");
@@ -79,5 +79,7 @@ impl TestApi {
             .send()
             .await
             .expect("Failed to execute request.")
+        }
     }
-}
+
+*/

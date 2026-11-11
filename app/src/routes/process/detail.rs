@@ -42,7 +42,7 @@ fn unexpected(e: impl Into<anyhow::Error>) -> ProcessStartError {
 
 #[get(path = "/processes/instances/{id}")]
 pub async fn instance_detail(
-    _user: &CheckedInUser,
+    user: &CheckedInUser,
     params: &PathParams<InstanceIdParams>,
     theme: Theme,
     engine: &Arc<WorkflowEngine>,
@@ -77,12 +77,13 @@ pub async fn instance_detail(
             node_id: t.node_id.clone(),
             label: format!("Waiting: {}", t.assignee),
         });
+        let allowed = t.assignee == "unassigned" || user.groups.contains(&t.assignee);
         rows.push(PendingRow {
             kind: "User task",
             node: t.node_id,
             detail: format!("assignee: {}", t.assignee),
             task_id: t.task_id.to_string(),
-            is_user_task: true,
+            is_user_task: allowed,
             gateway_choices,
         });
     }

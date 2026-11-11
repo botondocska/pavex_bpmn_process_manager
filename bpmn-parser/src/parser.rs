@@ -365,10 +365,26 @@ pub fn parse_bpmn_xml(xml: &str) -> EngineResult<ProcessDefinition> {
         builder = add_listeners(builder, &node_id, task.extension_elements);
     }
 
+    let mut lane_group: HashMap<String, String> = HashMap::new();
+    for ls in &process.lane_sets {
+        for lane in &ls.lanes {
+            let Some(g) = lane.group.as_ref().filter(|g| !g.trim().is_empty()) else {
+                continue;
+            };
+            for r in &lane.flow_node_refs {
+                lane_group.insert(r.value.trim().to_string(), g.trim().to_string());
+            }
+        }
+    }
+
     // 4. Process User Tasks
     for task in process.user_tasks {
         let node_id = task.id.clone();
-        let assignee = task.assignee.unwrap_or_else(|| "unassigned".into());
+        let assignee = lane_group
+            .get(&task.id)
+            .cloned()
+            .or(task.assignee)
+            .unwrap_or_else(|| "unassigned".into());
         builder = builder.node(task.id, BpmnElement::UserTask(assignee));
         builder = add_listeners(builder, &node_id, task.extension_elements);
     }

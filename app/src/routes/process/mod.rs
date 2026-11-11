@@ -62,6 +62,8 @@ pub enum ProcessStartError {
     Engine(#[from] EngineError),
     #[error("Something went wrong. Please retry later.")]
     UnexpectedError(#[source] anyhow::Error),
+    #[error("Not allowed.")]
+    Forbidden,
 }
 
 #[pavex::methods]
@@ -76,6 +78,7 @@ impl ProcessStartError {
                 Response::bad_request()
             }
             ProcessStartError::UnexpectedError(_) => Response::internal_server_error(),
+            ProcessStartError::Forbidden => Response::forbidden(),
         }
         .set_typed_body(format!("{self}"))
     }

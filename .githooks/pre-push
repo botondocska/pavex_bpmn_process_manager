@@ -1,4 +1,5 @@
 #!/bin/sh
+#.githooks\pre-push
 set -e
 
 echo ">>> cargo deny"

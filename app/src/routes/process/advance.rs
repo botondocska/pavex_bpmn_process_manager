@@ -17,7 +17,7 @@ pub struct AdvanceForm {
 
 #[post(path = "/processes/instances/{id}/advance")]
 pub async fn advance_instance(
-    _user: &CheckedInUser,
+    user: &CheckedInUser,
     params: &PathParams<InstanceIdParams>,
     body: &UrlEncodedBody<AdvanceForm>,
     engine: &Arc<WorkflowEngine>,
@@ -30,6 +30,10 @@ pub async fn advance_instance(
         .into_iter()
         .find(|t| t.task_id == task_id && t.instance_id == instance_id)
         .ok_or(ProcessStartError::NotFound)?;
+
+    if task.assignee != "unassigned" && !user.groups.contains(&task.assignee) {
+        return Err(ProcessStartError::Forbidden);
+    }
 
     let instance = engine.get_instance_details(instance_id).await?;
     let def = engine
