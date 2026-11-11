@@ -6,4 +6,5 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 unmaintained = "workspace"
 yanked = "deny"
 # Add a CVE to this list to "silence" it in CI
-ignore = []
+ignore = [ 
+    {id = "RUSTSEC-2023-0071", reason = "openidconnect only verifies RS256 sigs, no private key ops. No fixed rsa release. Revisit when openidconnect bumps rsa." } ]
