@@ -5158,6 +5158,10 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
+ "getrandom 0.4.3",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "indexmap 2.14.2",
  "log",
  "memchr",
@@ -5183,6 +5187,7 @@ dependencies = [
  "typenum",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "zerocopy",
 ]
 

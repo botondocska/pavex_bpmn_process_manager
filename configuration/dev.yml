@@ -4,3 +4,31 @@
 server:
   ip: "127.0.0.1"
   port: 8000
+
+session:
+  cookie:
+    secure: false
+
+auth:
+  client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
+  issuer_url: "http://localhost:8080/realms/test"
+  client_id: "bpm"
+  redirect_uri: "http://localhost:8000/auth/callback"
+  scopes: []
+  groups_claim: "group"
+  email_claim: "email"
+
+database:
+  host: "localhost"
+  port: 5432
+  username: "postgres"
+  password: "postgres"
+  database_name: "pavex_bpmn_process_manager_db"
+  require_ssl: false
+
+cookies:
+  crypto_rules:
+    - cookie_names: ["id"]
+      algorithm: "encryption"
+      key: "7a35033bffa439f75f77e6022115f9a3b3b6efbf5c8d93998aeca36039823ab440ed55b94f6e60a622b27d12a65a530943bd8f37b31e1e29ad12ff5be3e28fb8"
+      fallbacks: []

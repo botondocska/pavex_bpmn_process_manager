@@ -13,6 +13,7 @@ COPY . .
 RUN cargo chef prepare  --recipe-path recipe.json
 
 FROM chef AS builder
+ENV SQLX_OFFLINE=true SKIP_TAILWIND_BUILD=1
 COPY --from=planner /app/recipe.json recipe.json
 # Build our project's dependencies, not our application!
 RUN cargo chef cook --release --recipe-path recipe.json
@@ -24,7 +25,7 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 COPY --from=builder /app/target/release/server bin
 COPY configuration configuration
-ENV PX_PROFILE=production
+ENV PX_PROFILE=prod
 # Enable backtraces to simplify debugging
 # production panics.
 ENV RUST_BACKTRACE=1

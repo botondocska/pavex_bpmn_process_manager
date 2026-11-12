@@ -13,6 +13,15 @@
         msg.innerHTML = evt.detail.xhr.responseText;
         dialog.showModal();
     });
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        const xhr = evt.detail.xhr;
+        if (!xhr || !xhr.responseURL) return;
+        const landed = new URL(xhr.responseURL).pathname;
+        if (landed === '/login' && evt.detail.requestConfig.path !== '/login') {
+            evt.detail.shouldSwap = false;
+            window.location.href = '/login';
+        }
+    });
     </script>
     <style>
     input[type="color"] {

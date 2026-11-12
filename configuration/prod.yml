@@ -1,3 +1,16 @@
 server:
   ip: "0.0.0.0"
   port: 8000
+
+database:
+  host: "db"
+  port: 5432
+  username: "bpm"
+  database_name: "pavex_bpmn_process_manager_db"
+  require_ssl: false
+
+auth:
+  issuer_url: "https://keycloak.corp.example/realms/corp"
+  redirect_uri: "https://bpm.corp.example/auth/callback"
+  client_id: "bpm"
+  groups_claim: "group"
