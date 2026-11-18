@@ -7,4 +7,6 @@ unmaintained = "workspace"
 yanked = "deny"
 # Add a CVE to this list to "silence" it in CI
 ignore = [ 
-    {id = "RUSTSEC-2023-0071", reason = "openidconnect only verifies RS256 sigs, no private key ops. No fixed rsa release. Revisit when openidconnect bumps rsa." } ]
+    {id = "RUSTSEC-2023-0071", reason = "openidconnect only verifies RS256 sigs, no private key ops. No fixed rsa release. Revisit when openidconnect bumps rsa." },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no fix. Pulled by sqlx, openidconnect, croner. Revisit when upstreams migrate to jiff/time." }
+    ]
