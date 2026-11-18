@@ -2,15 +2,30 @@ server:
   ip: "0.0.0.0"
   port: 8000
 
+session:
+  cookie:
+    secure: false
+
+auth:
+  client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
+  issuer_url: "http://localhost:8080/realms/test"
+  client_id: "bpm"
+  redirect_uri: "http://localhost:8000/auth/callback"
+  scopes: []
+  groups_claim: "group"
+  email_claim: "email"
+
 database:
-  host: "db"
+  host: "localhost"
   port: 5432
-  username: "bpm"
+  username: "postgres"
+  password: "postgres"
   database_name: "pavex_bpmn_process_manager_db"
   require_ssl: false
 
-auth:
-  issuer_url: "https://keycloak.corp.example/realms/corp"
-  redirect_uri: "https://bpm.corp.example/auth/callback"
-  client_id: "bpm"
-  groups_claim: "group"
+cookies:
+  crypto_rules:
+    - cookie_names: ["id"]
+      algorithm: "encryption"
+      key: "e86bb2e78a84b2cef28d048d9dff65c277b844430f86723c8b017ba0ad5eacb22680a0824745d059497f63e072a90505ccd564fa34699cbdadff8b14b5e54b37"
+      fallbacks: []

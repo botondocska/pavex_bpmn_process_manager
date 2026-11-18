@@ -34,7 +34,7 @@ uuid = { version = "1.26.1", features = ["serde", "v4"] }
 thiserror = "2.0.20"
 tokio = "1.53.1"
 anyhow = "1.0.104"
-openidconnect = "4"
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 base64 = "0.22"
 askama = "0.16.1"

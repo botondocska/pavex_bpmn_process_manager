@@ -104,7 +104,7 @@ pub async fn list_processes(
         })
         .collect();
 
-    let body = ProcessListPage {
+    let body: String = ProcessListPage {
         active_page: "processes",
         nav_items: NAV_ITEMS,
         theme,

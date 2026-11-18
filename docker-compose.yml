@@ -7,7 +7,9 @@ services:
       POSTGRES_DB: pavex_bpmn_process_manager_db
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d:ro   # 01.sql: CREATE DATABASE keycloak;
+    configs:
+      - source: init_keycloak
+        target: /docker-entrypoint-initdb.d/01.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 5s
@@ -16,6 +18,7 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     command: start
+    ports: ["8080:8080"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://db:5432/keycloak
@@ -30,9 +33,17 @@ services:
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      test:
+        - CMD-SHELL
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/9000
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          read -r line <&3
+          [[ "$$line" == *"200"* ]]
       interval: 10s
+      timeout: 5s
       retries: 15
+      start_period: 60s
 
   app:
     build: .
@@ -40,17 +51,20 @@ services:
     environment:
       PX_DATABASE__HOST: db
       PX_DATABASE__PORT: "5432"
-      PX_DATABASE__USERNAME: ${PX_DATABASE__USERNAME}
-      PX_DATABASE__PASSWORD: ${PX_DATABASE__PASSWORD}
+      PX_DATABASE__USERNAME: ${DB_USER}
+      PX_DATABASE__PASSWORD: ${DB_PASSWORD}
       PX_DATABASE__DATABASE_NAME: pavex_bpmn_process_manager_db
       PX_DATABASE__REQUIRE_SSL: "false"
       PX_AUTH__ISSUER_URL: ${KC_PUBLIC_URL}/realms/${KC_REALM}
       PX_AUTH__CLIENT_SECRET: ${PX_AUTH__CLIENT_SECRET}
       PX_AUTH__REDIRECT_URI: ${APP_PUBLIC_URL}/auth/callback
-      PX_COOKIES__CRYPTO_RULES: ${COOKIE_RULES_JSON}
     depends_on:
       db: { condition: service_healthy }
       keycloak: { condition: service_healthy }
+
+configs:
+  init_keycloak:
+    content: CREATE DATABASE keycloak;
 
 volumes:
   pgdata:
