@@ -3,29 +3,13 @@
 # to commit this file to the repository.
 server:
   ip: "127.0.0.1"
-  port: 8000
 
 session:
   cookie:
     secure: false
 
 auth:
-  issuer_url: "http://localhost:8080/realms/test"
-  discovery_url: "http://keycloak:8080/realms/test"
   client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
-  client_id: "bpm"
-  redirect_uri: "http://localhost:8000/auth/callback"
-  scopes: []
-  groups_claim: "group"
-  email_claim: "email"
-
-database:
-  host: "localhost"
-  port: 5432
-  username: "postgres"
-  password: "postgres"
-  database_name: "pavex_bpmn_process_manager_db"
-  require_ssl: false
 
 cookies:
   crypto_rules:

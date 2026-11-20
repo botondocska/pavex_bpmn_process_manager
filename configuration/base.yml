@@ -6,10 +6,6 @@ server:
   port: 8000
   graceful_shutdown_timeout: "1 minute"
 
-timer:
-  enabled: true
-  poll_interval: "5 seconds"
-
 auth:
   issuer_url: "http://localhost:8080/realms/test"
   client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
