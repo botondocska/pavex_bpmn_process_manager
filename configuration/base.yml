@@ -11,8 +11,8 @@ timer:
   poll_interval: "5 seconds"
 
 auth:
-  client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
   issuer_url: "http://localhost:8080/realms/test"
+  client_secret: "8BKC2lKaY8AnOwLSu7qnawAkGex2pixrkOrghJiEboreExmfXOURCQXZRGvIxsovJPsN6kAYXsymXclpVpMLGD"
   client_id: "bpm"
   redirect_uri: "http://localhost:8000/auth/callback"
   scopes: []
